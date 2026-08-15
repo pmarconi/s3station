@@ -1,0 +1,25 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  bin = "./tmp/station"
+  cmd = "go mod download && go tool templ generate && go build -o ./tmp/station ./cmd/server"
+  delay = 500
+  exclude_dir = ["tmp", "vendor", "docs", ".git"]
+  exclude_regex = ["_test\\.go$", "_templ\\.go$"]
+  include_ext = ["go", "templ", "css", "js"]
+  kill_delay = "1s"
+  poll = true
+  poll_interval = 500
+  send_interrupt = true
+  stop_on_error = true
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true

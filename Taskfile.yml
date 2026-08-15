@@ -1,0 +1,52 @@
+version: "3"
+
+tasks:
+  generate:
+    desc: Generate templ Go files once
+    cmds:
+      - go tool templ generate
+
+  server:
+    desc: Generate templates, restart Go, and serve on port 8080
+    cmds:
+      - go tool air -c .air.toml
+
+  deps:
+    desc: Start Postgres and Redis
+    cmds:
+      - docker compose up -d postgres redis
+
+  dev:
+    desc: Start dependencies and the Go server with live reload
+    deps: [deps]
+    cmds:
+      - task server
+
+  kill:
+    desc: Stop this project's dev processes and free port 8080
+    cmds:
+      - pkill -f "air -c .air.toml" 2>/dev/null || true
+      - pkill -f "./tmp/station" 2>/dev/null || true
+      - pkill -f "go tool air" 2>/dev/null || true
+      - lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+      - echo "Ports freed."
+
+  test:go:
+    desc: Run Go tests
+    cmds:
+      - go test ./...
+
+  tidy:
+    desc: Tidy Go modules
+    cmds:
+      - go mod tidy
+
+  docker:up:
+    desc: Start the full stack with live reload
+    cmds:
+      - docker compose up --build
+
+  docker:down:
+    desc: Stop the Docker stack
+    cmds:
+      - docker compose down

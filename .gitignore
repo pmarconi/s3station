@@ -1,0 +1,8 @@
+.env
+bin/
+tmp/
+build-errors.log
+dist/
+.DS_Store
+*.exe
+vendor/

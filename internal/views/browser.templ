@@ -1,0 +1,245 @@
+package views
+
+import (
+	"station/internal/filesvc"
+	"station/internal/models"
+)
+
+templ Browser(user string, listing models.Listing) {
+	@Layout("Station") {
+		<div
+			data-attr:data-current-prefix="$prefix"
+			data-signals={ InitialSignals(listing.Prefix) }
+			data-on:station-upload-start__window="$_busy = true; $_flash = evt.detail.message; $_flashKind = 'ok'"
+			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
+			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showDelete = $_showPreview = false)"
+		>
+			@Topbar(user, "depot")
+			<main class="page">
+				@Toolbar(listing)
+				@FilePanel(listing)
+			</main>
+			@BrowserModals()
+			@DropOverlay()
+		</div>
+	}
+}
+
+templ Topbar(user string, section string) {
+	<div class="navbar bg-base-100 shadow-sm">
+		<div class="navbar-start">
+			<a href="/" class="btn btn-ghost text-xl">Station</a>
+			<ul class="menu menu-horizontal px-1">
+				<li>
+					<a href="/" class={ templ.KV("menu-active", section == "depot") }>Depot</a>
+				</li>
+				<li>
+					<a href="/settings" class={ templ.KV("menu-active", section == "settings") }>Settings</a>
+				</li>
+			</ul>
+		</div>
+		<div class="navbar-end">
+			<span>{ user }</span>
+			<form method="post" action="/logout">
+				<button type="submit" class="btn btn-ghost">Sign out</button>
+			</form>
+		</div>
+	</div>
+}
+
+templ Toolbar(listing models.Listing) {
+	<section id="toolbar">
+		@Crumbs(listing.Prefix)
+		<input type="search" class="input" placeholder="Filter this folder" data-bind:query/>
+		<button class="btn" data-on:click="$_showNewFolder = true">New folder</button>
+		<button type="button" class="btn btn-primary" id="upload-btn" data-attr:disabled="$_busy">Upload</button>
+		<input id="upload-input" type="file" multiple hidden/>
+		<div class="dropdown">
+			<div tabindex="0" role="button" class="btn" aria-label="Folder options">⋮</div>
+			<ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
+				<li>
+					<button type="button" data-on:click="document.activeElement.blur(); $refresh = true; @get('/files')" data-indicator:_busy>
+						Reload folder from the bucket
+					</button>
+				</li>
+			</ul>
+		</div>
+		<div class="join">
+			<button class="btn join-item" data-class:btn-active="$view === 'grid'" data-on:click="$view = 'grid'">Grid</button>
+			<button class="btn join-item" data-class:btn-active="$view === 'list'" data-on:click="$view = 'list'">List</button>
+		</div>
+		@MetaBar(listing)
+	</section>
+}
+
+templ Crumbs(prefix string) {
+	<div id="crumbs" class="breadcrumbs text-sm">
+		<ul>
+			for _, c := range filesvc.Breadcrumbs(prefix) {
+				<li>
+					<a data-station-folder={ c.Prefix } data-on:click={ NavigateExpr(c.Prefix) }>{ c.Name }</a>
+				</li>
+			}
+		</ul>
+	</div>
+}
+
+templ MetaBar(listing models.Listing) {
+	<div id="meta-bar">
+		<span>{ filesvc.FormatBytes(TotalSize(listing.Entries)) } · { ItemCount(listing.Entries) }</span>
+		if listing.FromCache {
+			<span class="badge badge-ghost">{ CacheLabel(listing) }</span>
+		} else {
+			<span class="badge badge-success">{ CacheLabel(listing) }</span>
+		}
+		<span class="loading loading-spinner" data-show="$_busy" style="display: none"></span>
+	</div>
+}
+
+templ FilePanel(listing models.Listing) {
+	<section id="file-panel" data-class:is-list="$view === 'list'">
+		if len(listing.Entries) == 0 {
+			<div class="card bg-base-200 shadow-sm">
+				<div class="card-body">
+					<h2 class="card-title">This folder is empty</h2>
+					<p>Drop files here or upload. They go directly to your S3 bucket.</p>
+				</div>
+			</div>
+		} else {
+			for _, e := range listing.Entries {
+				@FileCard(e)
+			}
+		}
+	</section>
+}
+
+templ FileCard(e models.Entry) {
+	<div
+		class="card bg-base-200 shadow-sm"
+		data-class:card-side="$view === 'list'"
+		data-show={ FilterExpr(e.Name) }
+		if e.IsDir {
+			data-station-folder={ e.Key }
+		} else {
+			draggable="true"
+			data-station-key={ e.Key }
+		}
+		if e.Kind == models.KindImage && GallerySrc(e) != "" {
+			data-gallery-src={ GallerySrc(e) }
+			data-gallery-name={ e.Name }
+		}
+	>
+		if e.IsDir {
+			<div class="card-body" data-on:click={ NavigateExpr(e.Key) }>
+				@FileGlyph(e.Kind)
+				<h2 class="card-title">{ e.Name }</h2>
+				<p>{ ItemMeta(e) }</p>
+				<div class="card-actions">
+					<button class="btn btn-ghost btn-sm btn-error" type="button" data-on:click={ TrashExpr(e) }>Trash</button>
+				</div>
+			</div>
+		} else {
+			<div
+				if e.Kind != models.KindImage {
+					data-on:click={ PreviewExpr(e) }
+				}
+			>
+				@CardThumbs(e)
+			</div>
+			<div class="card-body">
+				<h2 class="card-title">{ e.Name }</h2>
+				<p>{ ItemMeta(e) }</p>
+				<div class="card-actions">
+					if e.DownloadURL != "" {
+						<a class="btn btn-sm" href={ templ.SafeURL(e.DownloadURL) } target="_blank" rel="noreferrer">Open</a>
+					}
+					<button class="btn btn-sm btn-error" type="button" data-on:click={ TrashExpr(e) }>Trash</button>
+				</div>
+			</div>
+		}
+	</div>
+}
+
+templ CardThumbs(e models.Entry) {
+	if len(e.ThumbURLs) > 1 {
+		<figure class="hover-gallery">
+			for _, u := range e.ThumbURLs {
+				<img src={ templ.SafeURL(u) } alt={ e.Name } draggable="false"/>
+			}
+		</figure>
+	} else if e.ThumbURL != "" {
+		<figure>
+			<img src={ templ.SafeURL(e.ThumbURL) } alt={ e.Name } draggable="false"/>
+		</figure>
+	} else if e.Kind == models.KindImage && e.PreviewURL != "" {
+		<figure>
+			<img src={ templ.SafeURL(e.PreviewURL) } alt={ e.Name } draggable="false"/>
+		</figure>
+	} else {
+		<figure>
+			@FileGlyph(e.Kind)
+		</figure>
+	}
+}
+
+templ BrowserModals() {
+	<dialog class="modal" data-attr:open="$_showNewFolder">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">New folder</h3>
+			<form data-on:submit="@post('/folders')">
+				<fieldset class="fieldset">
+					<legend class="fieldset-legend">Name</legend>
+					<input class="input" data-bind:newFolderName placeholder="Albums" required/>
+				</fieldset>
+				<div class="modal-action">
+					<button type="button" class="btn" data-on:click="$_showNewFolder = false">Cancel</button>
+					<button type="submit" class="btn btn-primary">Create</button>
+				</div>
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showNewFolder = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showDelete">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Move to trash</h3>
+			<p>This removes <strong data-text="$targetName"></strong> from the depot. The object stays in the bucket under <code>.station-trash/</code> until you permanently delete it in Settings.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/files/trash')">Move to trash</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showDelete = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showPreview">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold" data-text="$_previewName"></h3>
+			<audio data-show="$_previewKind === 'audio'" style="display: none" controls data-attr:src="$_previewURL"></audio>
+			<video data-show="$_previewKind === 'video'" style="display: none" controls data-attr:src="$_previewURL"></video>
+			<iframe data-show="$_previewKind === 'pdf'" style="display: none" data-attr:src="$_previewURL" title="PDF"></iframe>
+			<p data-show="!['image','audio','video','pdf'].includes($_previewKind)" style="display: none">No inline preview. Use Open on the card to download via a presigned URL.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showPreview = false">Close</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showPreview = false">close</button>
+		</form>
+	</dialog>
+	<div class="toast toast-end" data-show="$_flash !== ''" style="display: none">
+		<div class="alert" data-class:alert-success="$_flashKind === 'ok'" data-class:alert-error="$_flashKind === 'bad'" data-on:click="$_flash = ''">
+			<span data-text="$_flash"></span>
+		</div>
+	</div>
+}
+
+templ DropOverlay() {
+	<div id="drop-overlay" class="toast toast-center" hidden>
+		<div class="alert">Drop to upload directly to S3</div>
+	</div>
+}

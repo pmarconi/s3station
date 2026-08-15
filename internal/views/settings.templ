@@ -1,0 +1,103 @@
+package views
+
+import "station/internal/models"
+
+templ Settings(user string, items []models.TrashItem) {
+	@Layout("Settings · Station") {
+		<div
+			data-signals={ InitialSignals("") }
+			data-on:keydown__window="evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
+		>
+			@Topbar(user, "settings")
+			<main class="page settings-stack">
+				<div>
+					<h1 class="text-xl font-bold">Settings</h1>
+					<p>Listing cache lives in Postgres. Trash lives in the bucket under <code>.station-trash/</code>. Permanent delete is the only action that removes objects from S3.</p>
+				</div>
+				<div class="card bg-base-200 shadow-sm">
+					<div class="card-body">
+						<h2 class="card-title">Listing cache</h2>
+						<p>Each folder listing is cached until you open it for the first time or use <strong>Reload folder from the bucket</strong> in that folder’s menu. The button below drops every cached listing.</p>
+						<div class="card-actions">
+							<button class="btn" data-on:click="@post('/cache/purge')">Clear all cached folders</button>
+						</div>
+					</div>
+				</div>
+				<div class="card bg-base-200 shadow-sm">
+					<div class="card-body">
+						<h2 class="card-title">Trash</h2>
+						<p>Items here are still in your bucket. Restore puts them back. Permanent delete cannot be undone.</p>
+						if len(items) > 0 {
+							<div class="card-actions">
+								<button class="btn btn-error" data-on:click="$_showEmptyTrash = true">Empty trash</button>
+							</div>
+						}
+						@TrashPanel(items)
+					</div>
+				</div>
+			</main>
+			@SettingsModals()
+		</div>
+	}
+}
+
+templ TrashPanel(items []models.TrashItem) {
+	<div id="trash-panel">
+		if len(items) == 0 {
+			<div class="card bg-base-100 shadow-sm">
+				<div class="card-body">
+					<h3 class="card-title">Trash is empty</h3>
+					<p>Deleted files from the depot will show up here.</p>
+				</div>
+			</div>
+		} else {
+			<ul class="list bg-base-100 rounded-box shadow-sm">
+				for _, item := range items {
+					<li class="list-row">
+						@FileGlyph(item.Kind)
+						<div>
+							<div>{ item.Name }</div>
+							<div>{ TrashMeta(item) }</div>
+						</div>
+						<button class="btn btn-sm" type="button" data-on:click={ RestoreExpr(item) }>Restore</button>
+						<button class="btn btn-sm btn-error" type="button" data-on:click={ PurgeExpr(item) }>Delete forever</button>
+					</li>
+				}
+			</ul>
+		}
+	</div>
+}
+
+templ SettingsModals() {
+	<dialog class="modal" data-attr:open="$_showDelete">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Delete forever</h3>
+			<p>Permanently remove <strong data-text="$targetName"></strong> from the bucket. This cannot be undone.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/trash/purge')">Delete forever</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showDelete = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showEmptyTrash">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Empty trash</h3>
+			<p>Every object under <code>.station-trash/</code> will be deleted from the bucket.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showEmptyTrash = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showEmptyTrash = false; @post('/trash/empty')">Empty trash</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showEmptyTrash = false">close</button>
+		</form>
+	</dialog>
+	<div class="toast toast-end" data-show="$_flash !== ''" style="display: none">
+		<div class="alert" data-class:alert-success="$_flashKind === 'ok'" data-class:alert-error="$_flashKind === 'bad'" data-on:click="$_flash = ''">
+			<span data-text="$_flash"></span>
+		</div>
+	</div>
+}
