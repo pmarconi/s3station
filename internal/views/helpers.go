@@ -134,7 +134,7 @@ func GallerySrc(e models.Entry) string {
 }
 
 func InGallery(e models.Entry) bool {
-	return (e.Kind == models.KindImage || e.Kind == models.KindVideo) && GallerySrc(e) != ""
+	return (e.Kind == models.KindImage || e.Kind == models.KindVideo || e.Kind == models.KindPDF) && GallerySrc(e) != ""
 }
 
 func PreviewExpr(e models.Entry) string {

@@ -25,7 +25,13 @@
     });
   }
 
+  function family(kind) {
+    return kind === "pdf" ? "pdf" : "media";
+  }
+
   function collect(startCard) {
+    const startKind = startCard.getAttribute("data-gallery-kind") || "image";
+    const fam = family(startKind);
     const cards = visibleCards();
     const list = cards.map(function (el) {
       const thumb = el.querySelector("img");
@@ -36,7 +42,7 @@
         thumb: thumb?.currentSrc || thumb?.src || "",
       };
     }).filter(function (item) {
-      return Boolean(item.src);
+      return Boolean(item.src) && family(item.kind) === fam;
     });
     const startSrc = startCard.getAttribute("data-gallery-src");
     const start = Math.max(0, list.findIndex(function (item) {
@@ -53,6 +59,10 @@
     return item && item.kind === "video";
   }
 
+  function isPDF(item) {
+    return item && item.kind === "pdf";
+  }
+
   function slideEl(i) {
     return document.querySelector('#gallery-carousel [data-slide="' + i + '"]');
   }
@@ -60,12 +70,12 @@
   function slideMedia(i) {
     const slide = slideEl(i);
     if (!slide) return null;
-    return slide.querySelector("img, video");
+    return slide.querySelector("img, video, iframe");
   }
 
   function currentImage() {
     const item = currentItem();
-    if (isVideo(item)) return null;
+    if (isVideo(item) || isPDF(item)) return null;
     return slideMedia(index);
   }
 
@@ -76,6 +86,8 @@
     if (media.dataset.loaded === item.src) return;
     if (item.kind === "video") {
       if (item.thumb) media.poster = item.thumb;
+      media.src = item.src;
+    } else if (item.kind === "pdf") {
       media.src = item.src;
     } else {
       media.src = item.src;
@@ -92,6 +104,8 @@
       media.removeAttribute("src");
       media.removeAttribute("poster");
       media.load();
+    } else if (media.tagName === "IFRAME") {
+      media.removeAttribute("src");
     } else if (media.dataset.loaded === item.src) {
       media.removeAttribute("src");
       if (item.thumb) media.src = item.thumb;
@@ -143,7 +157,7 @@
   }
 
   function setZoom(next) {
-    if (isVideo(currentItem())) return;
+    if (isVideo(currentItem()) || isPDF(currentItem())) return;
     scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
     if (scale === 1) {
       tx = 0;
@@ -160,7 +174,7 @@
     if ($("gallery-prev")) $("gallery-prev").hidden = items.length < 2;
     if ($("gallery-next")) $("gallery-next").hidden = items.length < 2;
     const zoom = $("gallery-zoom");
-    if (zoom) zoom.hidden = isVideo(item);
+    if (zoom) zoom.hidden = isVideo(item) || isPDF(item);
     if ($("gallery-zoom-reset")) $("gallery-zoom-reset").textContent = Math.round(scale * 100) + "%";
     if ($("gallery-zoom-out")) $("gallery-zoom-out").disabled = scale <= MIN_ZOOM;
     if ($("gallery-zoom-in")) $("gallery-zoom-in").disabled = scale >= MAX_ZOOM;
@@ -202,6 +216,10 @@
         media.playsInline = true;
         media.preload = "metadata";
         if (item.thumb) media.poster = item.thumb;
+      } else if (item.kind === "pdf") {
+        media = document.createElement("iframe");
+        media.title = item.name || "PDF";
+        media.setAttribute("allow", "fullscreen");
       } else {
         media = document.createElement("img");
         media.draggable = false;
@@ -257,7 +275,7 @@
 
   function onWheel(event) {
     const modal = $("gallery-modal");
-    if (!modal?.open || isVideo(currentItem())) return;
+    if (!modal?.open || isVideo(currentItem()) || isPDF(currentItem())) return;
     if (!event.target.closest(".gallery-stage")) return;
     event.preventDefault();
     const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -265,7 +283,7 @@
   }
 
   function onPointerDown(event) {
-    if (scale <= 1 || isVideo(currentItem())) return;
+    if (scale <= 1 || isVideo(currentItem()) || isPDF(currentItem())) return;
     if (!event.target.closest(".gallery-stage img")) return;
     dragging = true;
     dragX = event.clientX;
@@ -330,7 +348,7 @@
 
   document.addEventListener("dblclick", function (event) {
     const modal = $("gallery-modal");
-    if (!modal?.open || isVideo(currentItem())) return;
+    if (!modal?.open || isVideo(currentItem()) || isPDF(currentItem())) return;
     if (!event.target.closest(".gallery-stage img")) return;
     event.preventDefault();
     setZoom(scale > 1 ? 1 : 2);
