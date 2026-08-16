@@ -23,6 +23,10 @@ Station treats S3 as the source of truth.
 
 It is not a background sync client (no watch loop, no two-way replica). It is a 1:1 window onto one prefix in one bucket.
 
+The same folder in the AWS console — `files/my backups/` — is the same objects Station shows in the grid:
+
+![Same folder in the S3 bucket](docs/s3-bucket.png)
+
 ## Stack
 
 | Layer | What |
