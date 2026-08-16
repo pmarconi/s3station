@@ -22,7 +22,7 @@ import (
 var (
 	ErrExists      = errors.New("that name is already used")
 	ErrInvalidMove = errors.New("cannot move a folder into itself")
-	ErrNoThumb     = errors.New("thumbnails are only for images and videos")
+	ErrNoThumb     = errors.New("thumbnails are only for images, videos, and PDFs")
 	ErrNoSelection = errors.New("nothing selected")
 )
 
@@ -599,7 +599,7 @@ func (s *Service) ListTrash(ctx context.Context) ([]models.TrashItem, error) {
 					g.item.PreviewURL = url
 				}
 			}
-			if g.item.Kind == models.KindImage || g.item.Kind == models.KindVideo {
+			if g.item.Kind == models.KindImage || g.item.Kind == models.KindVideo || g.item.Kind == models.KindPDF {
 				if urls := thumbs.LocalURLs(src, g.item.Kind); len(urls) > 0 {
 					g.item.ThumbURLs = urls
 					g.item.ThumbURL = urls[0]
@@ -940,7 +940,7 @@ func (s *Service) GenerateThumb(ctx context.Context, key string) error {
 	if err := s.enrichKind(ctx, &entry); err != nil {
 		return err
 	}
-	if entry.Kind != models.KindImage && entry.Kind != models.KindVideo {
+	if entry.Kind != models.KindImage && entry.Kind != models.KindVideo && entry.Kind != models.KindPDF {
 		return ErrNoThumb
 	}
 	abs := s.abs(key)
@@ -1012,7 +1012,7 @@ func (s *Service) attachURLs(ctx context.Context, entries []models.Entry) error 
 		case models.KindImage, models.KindAudio, models.KindVideo, models.KindPDF:
 			entries[i].PreviewURL = url
 		}
-		if entries[i].Kind == models.KindImage || entries[i].Kind == models.KindVideo {
+		if entries[i].Kind == models.KindImage || entries[i].Kind == models.KindVideo || entries[i].Kind == models.KindPDF {
 			if urls := thumbs.LocalURLs(s3key, entries[i].Kind); len(urls) > 0 {
 				entries[i].ThumbURLs = urls
 				entries[i].ThumbURL = urls[0]

@@ -278,9 +278,11 @@ func publicError(err error) string {
 	case errors.Is(err, filesvc.ErrNoSelection):
 		return "Select at least one item first."
 	case errors.Is(err, filesvc.ErrNoThumb):
-		return "Thumbnails are only for images and videos."
+		return "Thumbnails are only for images, videos, and PDFs."
 	case errors.Is(err, thumbs.ErrNoFFmpeg):
 		return "Video thumbnails need ffmpeg on the server."
+	case errors.Is(err, thumbs.ErrNoPDFRenderer):
+		return "PDF thumbnails need pdftoppm, mutool, or ImageMagick on the server."
 	case errors.Is(err, locks.ErrLocked):
 		return "Unlock this folder first."
 	case errors.Is(err, locks.ErrWrongPassword):

@@ -2,6 +2,8 @@
 
 A small Nextcloud-style browser for an **existing S3 bucket**. Station is not a second copy of your files. The bucket is the depot: what you see in the UI is what lives in S3.
 
+![Station depot: folders, image thumbs, and a PDF preview](docs/screenshot.png)
+
 User objects sit under **`files/`** (`FILES_PREFIX`). Station-only data stays next to that prefix so other tools can share the same bucket:
 
 | Prefix | Role |
@@ -74,7 +76,7 @@ Folder and multi-select **Download** build a zip on the server by reading the se
 
 - **Move / rename** — copy then delete in the bucket, then refresh the cache.
 - **Trash** — copy into `.station-trash/`. Objects stay in S3 until you permanently delete them in Trash or Settings.
-- **Thumbnails** — WebP stills written under `.station-thumbs/` and served by the app (`GET /thumbs/…`). Video frames can be regenerated to pick a different still.
+- **Thumbnails** — WebP stills written under `.station-thumbs/` and served by the app (`GET /thumbs/…`). Images and the first page of a PDF use the same card thumb. Video frames can be regenerated to pick a different still. PDF thumbs need `pdftoppm` (poppler), `mutool`, or ImageMagick on the server.
 - **Folder zip** — Station lists the prefix and streams a zip of those objects.
 
 ## What you can do in the UI

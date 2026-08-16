@@ -155,7 +155,7 @@ func RenameExpr(e models.Entry) string {
 }
 
 func CanThumb(e models.Entry) bool {
-	return !e.IsDir && (e.Kind == models.KindImage || e.Kind == models.KindVideo)
+	return !e.IsDir && (e.Kind == models.KindImage || e.Kind == models.KindVideo || e.Kind == models.KindPDF)
 }
 
 func GenerateThumbExpr(e models.Entry) string {

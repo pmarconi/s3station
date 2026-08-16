@@ -43,7 +43,7 @@ func EnsureLater(s3c *s3store.Client, key string, kind models.Kind) {
 
 func thumbKeys(key string, kind models.Kind) []string {
 	switch kind {
-	case models.KindImage:
+	case models.KindImage, models.KindPDF:
 		return []string{storage.ThumbKey(key)}
 	case models.KindVideo:
 		keys := make([]string, storage.VideoThumbCount)
@@ -78,6 +78,12 @@ func Ensure(ctx context.Context, s3c *s3store.Client, key string, kind models.Ki
 		return []string{url}, nil
 	case models.KindVideo:
 		return ensureVideo(ctx, s3c, key)
+	case models.KindPDF:
+		url, err := ensurePDF(ctx, s3c, key)
+		if err != nil {
+			return nil, err
+		}
+		return []string{url}, nil
 	default:
 		return nil, nil
 	}

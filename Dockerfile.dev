@@ -1,6 +1,6 @@
 FROM golang:1.24-alpine
 WORKDIR /src
-RUN apk add --no-cache git ffmpeg
+RUN apk add --no-cache git ffmpeg poppler-utils
 COPY go.mod go.sum ./
 RUN go mod download
 EXPOSE 8080

@@ -8,7 +8,7 @@ RUN go run github.com/a-h/templ/cmd/templ@v0.3.960 generate
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/station ./cmd/server
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata ffmpeg \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg poppler-utils \
 	&& adduser -D -H -u 10001 station
 WORKDIR /app
 COPY --from=build /out/station /app/station
