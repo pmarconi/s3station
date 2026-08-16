@@ -1,4 +1,4 @@
-# Station
+# S3 Depot Station
 
 A small Nextcloud-style browser for an **existing S3 bucket**. Station is not a second copy of your files. The bucket is the depot: what you see in the UI is what lives in S3.
 
