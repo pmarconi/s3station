@@ -6,7 +6,7 @@ templ Trash(user string, items []models.TrashItem) {
 	@Layout("Trash · Station") {
 		<div
 			class="drawer lg:drawer-open"
-			data-signals={ InitialSignals(models.Listing{}) }
+			data-signals={ InitialSignals(models.Listing{}, "") }
 			data-on:keydown__window="evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
@@ -64,9 +64,10 @@ templ TrashPanel(items []models.TrashItem) {
 templ TrashCard(item models.TrashItem) {
 	<article
 		class="file-tile group"
-		if item.Kind == models.KindImage && item.PreviewURL != "" {
-			data-gallery-src={ item.PreviewURL }
+		if InGallery(TrashAsEntry(item)) {
+			data-gallery-src={ GallerySrc(TrashAsEntry(item)) }
 			data-gallery-name={ item.Name }
+			data-gallery-kind={ string(item.Kind) }
 		}
 	>
 		<div class="file-tile-preview relative aspect-square w-full">

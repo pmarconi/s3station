@@ -48,9 +48,9 @@ func Trash(user string, items []models.TrashItem) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(InitialSignals(models.Listing{}))
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(InitialSignals(models.Listing{}, ""))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 9, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 9, Col: 54}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -213,15 +213,15 @@ func TrashCard(item models.TrashItem) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if item.Kind == models.KindImage && item.PreviewURL != "" {
+		if InGallery(TrashAsEntry(item)) {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, " data-gallery-src=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var7 string
-			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(item.PreviewURL)
+			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(GallerySrc(TrashAsEntry(item)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 68, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 68, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -240,12 +240,25 @@ func TrashCard(item models.TrashItem) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" data-gallery-kind=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var9 string
+			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(string(item.Kind))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 70, Col: 40}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "><div class=\"file-tile-preview relative aspect-square w-full\"><div class=\"h-full w-full overflow-hidden rounded-xl bg-base-100\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "><div class=\"file-tile-preview relative aspect-square w-full\"><div class=\"h-full w-full overflow-hidden rounded-xl bg-base-100\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -253,72 +266,72 @@ func TrashCard(item models.TrashItem) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</div><div class=\"absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100\" data-on:click=\"evt.stopPropagation()\"><div class=\"dropdown dropdown-end\"><div tabindex=\"0\" role=\"button\" class=\"btn btn-circle btn-sm btn-neutral\" aria-label=\"Item options\"><svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z\"></path></svg></div><ul tabindex=\"0\" class=\"dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg\"><li><button type=\"button\" data-on:click=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var9 string
-		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(RestoreExpr(item))
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 82, Col: 65}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\">Restore</button></li><li><button type=\"button\" class=\"text-error\" data-on:click=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</div><div class=\"absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100\" data-on:click=\"evt.stopPropagation()\"><div class=\"dropdown dropdown-end\"><div tabindex=\"0\" role=\"button\" class=\"btn btn-circle btn-sm btn-neutral\" aria-label=\"Item options\"><svg xmlns=\"http://www.w3.org/2000/svg\" class=\"size-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z\"></path></svg></div><ul tabindex=\"0\" class=\"dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg\"><li><button type=\"button\" data-on:click=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var10 string
-		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(PurgeExpr(item))
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(RestoreExpr(item))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 83, Col: 82}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 83, Col: 65}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\">Delete forever</button></li></ul></div></div></div><div class=\"file-tile-meta mt-2 min-w-0\"><p class=\"truncate text-sm font-medium\" title=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\">Restore</button></li><li><button type=\"button\" class=\"text-error\" data-on:click=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var11 string
-		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(item.Name)
+		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(PurgeExpr(item))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 89, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 84, Col: 82}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\">Delete forever</button></li></ul></div></div></div><div class=\"file-tile-meta mt-2 min-w-0\"><p class=\"truncate text-sm font-medium\" title=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var12 string
 		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(item.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 89, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 90, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</p><p class=\"truncate text-xs text-base-content/50\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var13 string
-		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(TrashMeta(item))
+		templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(item.Name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 90, Col: 69}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 90, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</p></div></article>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</p><p class=\"truncate text-xs text-base-content/50\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var14 string
+		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(TrashMeta(item))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/trash.templ`, Line: 91, Col: 69}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</p></div></article>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -342,12 +355,12 @@ func TrashModals() templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var14 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var14 == nil {
-			templ_7745c5c3_Var14 = templ.NopComponent
+		templ_7745c5c3_Var15 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var15 == nil {
+			templ_7745c5c3_Var15 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<dialog class=\"modal\" data-attr:open=\"$_showDelete\"><div class=\"modal-box\"><h3 class=\"text-lg font-bold\">Delete forever</h3><p>Permanently remove <strong data-text=\"$targetName\"></strong> from the bucket. This cannot be undone.</p><div class=\"modal-action\"><button type=\"button\" class=\"btn\" data-on:click=\"$_showDelete = false\">Cancel</button> <button type=\"button\" class=\"btn btn-error\" data-on:click=\"$_showDelete = false; @post('/trash/purge')\">Delete forever</button></div></div><form method=\"dialog\" class=\"modal-backdrop\"><button type=\"button\" data-on:click=\"$_showDelete = false\">close</button></form></dialog> <dialog class=\"modal\" data-attr:open=\"$_showEmptyTrash\"><div class=\"modal-box\"><h3 class=\"text-lg font-bold\">Empty trash</h3><p>Every object under <code>.station-trash/</code> will be deleted from the bucket.</p><div class=\"modal-action\"><button type=\"button\" class=\"btn\" data-on:click=\"$_showEmptyTrash = false\">Cancel</button> <button type=\"button\" class=\"btn btn-error\" data-on:click=\"$_showEmptyTrash = false; @post('/trash/empty')\">Empty trash</button></div></div><form method=\"dialog\" class=\"modal-backdrop\"><button type=\"button\" data-on:click=\"$_showEmptyTrash = false\">close</button></form></dialog><div class=\"toast toast-end z-50\" data-show=\"$_flash !== ''\" style=\"display: none\"><div class=\"alert\" data-class:alert-success=\"$_flashKind === 'ok'\" data-class:alert-error=\"$_flashKind === 'bad'\" data-on:click=\"$_flash = ''\"><span data-text=\"$_flash\"></span></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<dialog class=\"modal\" data-attr:open=\"$_showDelete\"><div class=\"modal-box\"><h3 class=\"text-lg font-bold\">Delete forever</h3><p>Permanently remove <strong data-text=\"$targetName\"></strong> from the bucket. This cannot be undone.</p><div class=\"modal-action\"><button type=\"button\" class=\"btn\" data-on:click=\"$_showDelete = false\">Cancel</button> <button type=\"button\" class=\"btn btn-error\" data-on:click=\"$_showDelete = false; @post('/trash/purge')\">Delete forever</button></div></div><form method=\"dialog\" class=\"modal-backdrop\"><button type=\"button\" data-on:click=\"$_showDelete = false\">close</button></form></dialog> <dialog class=\"modal\" data-attr:open=\"$_showEmptyTrash\"><div class=\"modal-box\"><h3 class=\"text-lg font-bold\">Empty trash</h3><p>Every object under <code>.station-trash/</code> will be deleted from the bucket.</p><div class=\"modal-action\"><button type=\"button\" class=\"btn\" data-on:click=\"$_showEmptyTrash = false\">Cancel</button> <button type=\"button\" class=\"btn btn-error\" data-on:click=\"$_showEmptyTrash = false; @post('/trash/empty')\">Empty trash</button></div></div><form method=\"dialog\" class=\"modal-backdrop\"><button type=\"button\" data-on:click=\"$_showEmptyTrash = false\">close</button></form></dialog><div class=\"toast toast-end z-50\" data-show=\"$_flash !== ''\" style=\"display: none\"><div class=\"alert\" data-class:alert-success=\"$_flashKind === 'ok'\" data-class:alert-error=\"$_flashKind === 'bad'\" data-on:click=\"$_flash = ''\"><span data-text=\"$_flash\"></span></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

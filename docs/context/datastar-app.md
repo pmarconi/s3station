@@ -16,9 +16,12 @@ Datastar SSE patches (same page, morph/replace fragments):
 | `@post('/folders')` | `createFolder` | same as listing |
 | `@post('/folders/unlock'\|'protect'\|'unprotect')` | lock handlers | same as listing |
 | `@post('/files/trash')` | `trash` | listing |
+| `@get('/folders/picker')` | `folderPicker` | `#move-picker` |
+| `@post('/files/move')` | `moveFromSignals` | listing |
 | `@post('/cache/purge')` | `purgeCache` | flash only |
 | `@post('/trash/restore'\|'purge'\|'empty')` | trash handlers | `#trash-panel` + signals |
 | `@post('/thumbs/purge')` | `purgeThumbs` | flash |
+| `@post('/prefs')` | `savePrefs` | `view` signal (Redis user pref) |
 
 Depot objects are stored under `files/` in the bucket (`FILES_PREFIX`). The browser URL is `/files/` plus that relative path (`/files/photos/italy/`). Other app pages stay at the root (`/trash`, `/settings`, …). A non-Datastar `GET /files` redirects to `/files/`.
 
@@ -26,7 +29,8 @@ Do **not** use `@get` / `@post` for binary or JSON APIs:
 
 - `GET /folders/archive` — zip stream (`<a href>`)
 - `GET /thumbs/*` — image bytes
-- `POST /uploads/presign`, `POST /uploads/complete`, `POST /files/move` — `fetch` + JSON from `upload.js`
+- `POST /uploads/presign`, `POST /uploads/complete` — `fetch` + JSON from `upload.js`
+- Drag-drop `POST /files/move` is also `fetch` + JSON. The Move to modal uses Datastar `@post('/files/move')`.
 
 If `Datastar-Request: true` and the session is dead, redirect with `sse.Redirect("/login")`, not `http.Redirect`.
 
@@ -34,7 +38,7 @@ If `Datastar-Request: true` and the session is dead, redirect with `sse.Redirect
 
 Initialized once on the page root with `data-signals={ InitialSignals(...) }` in `internal/views/helpers.go`.
 
-Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `folderPassword`, `refresh`, `nav`. `$nav` is true only for in-page folder clicks (history `pushState`); reloads and mutations `replaceState` the same path.
+Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `destPrefix`, `folderPassword`, `view`, `refresh`, `nav`. `$nav` is true only for in-page folder clicks (history `pushState`); reloads and mutations `replaceState` the same path. Grid/list `$view` is stored in Redis per username (`prefs:{user}`) and seeded on page load.
 
 The rest is frontend-only. Names starting with `_` are UI state (`_busy`, `_flash`, `_showDelete`, `_locked`, …).
 

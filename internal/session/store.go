@@ -16,10 +16,18 @@ const (
 	cookieName     = "station_session"
 	keyPrefix      = "session:"
 	unlockedPrefix = "session-unlock:"
+	prefsPrefix    = "prefs:"
 	loginKey       = "login:"
 	unlockKey      = "unlock:"
 	ttl            = 7 * 24 * time.Hour
 )
+
+func NormalizeView(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "list") {
+		return "list"
+	}
+	return "grid"
+}
 
 type Store struct {
 	rdb    *redis.Client
@@ -81,6 +89,24 @@ func (s *Store) Delete(ctx context.Context, token string) error {
 		return nil
 	}
 	return s.rdb.Del(ctx, keyPrefix+token, unlockedPrefix+token).Err()
+}
+
+func (s *Store) SetPref(ctx context.Context, username, key, value string) error {
+	if username == "" || key == "" {
+		return nil
+	}
+	return s.rdb.HSet(ctx, prefsPrefix+username, key, value).Err()
+}
+
+func (s *Store) Pref(ctx context.Context, username, key string) string {
+	if username == "" || key == "" {
+		return ""
+	}
+	v, err := s.rdb.HGet(ctx, prefsPrefix+username, key).Result()
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 func (s *Store) UnlockFolder(ctx context.Context, token, prefix string) error {

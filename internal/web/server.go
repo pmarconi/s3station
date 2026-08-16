@@ -26,8 +26,10 @@ type Signals struct {
 	NewFolderName  string `json:"newFolderName"`
 	TargetKey      string `json:"targetKey"`
 	TargetBatch    string `json:"targetBatch"`
+	DestPrefix     string `json:"destPrefix"`
 	FolderPassword string `json:"folderPassword"`
 	RenameTo       string `json:"renameTo"`
+	View           string `json:"view"`
 	Refresh        bool   `json:"refresh"`
 	Nav            bool   `json:"nav"`
 }
@@ -70,6 +72,8 @@ func New(cfg config.Config, sessions *session.Store, files *filesvc.Service, log
 		r.Post("/folders/protect", s.protectFolder)
 		r.Post("/folders/unprotect", s.unprotectFolder)
 		r.Post("/folders/unlock", s.unlockFolder)
+		r.Post("/prefs", s.savePrefs)
+		r.Get("/folders/picker", s.folderPicker)
 		r.Get("/folders/archive", s.folderArchive)
 		r.Post("/files/trash", s.trash)
 		r.Post("/files/move", s.move)
@@ -174,6 +178,26 @@ func (s *Server) readSignals(r *http.Request) (Signals, error) {
 	return sig, nil
 }
 
+func (s *Server) uiView(r *http.Request) string {
+	return session.NormalizeView(s.sessions.Pref(r.Context(), currentUser(r), "view"))
+}
+
+func (s *Server) savePrefs(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	view := session.NormalizeView(sig.View)
+	if err := s.sessions.SetPref(r.Context(), currentUser(r), "view", view); err != nil {
+		s.log.Error("save prefs", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", "Could not save the view preference.")
+		return
+	}
+	sse := datastar.NewSSE(w, r)
+	_ = sse.MarshalAndPatchSignals(map[string]any{"view": view})
+}
+
 func (s *Server) flash(sse *datastar.ServerSentEventGenerator, kind, msg string) {
 	_ = sse.MarshalAndPatchSignals(map[string]any{
 		"_flash":     msg,
@@ -185,7 +209,7 @@ func (s *Server) flash(sse *datastar.ServerSentEventGenerator, kind, msg string)
 
 func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing models.Listing, msg string, prevPrefix string, push bool) {
 	sse := datastar.NewSSE(w, r)
-	_ = sse.PatchElementTempl(views.FilePanel(listing), datastar.WithSelector("#file-panel"), datastar.WithModeReplace())
+	_ = sse.PatchElementTempl(views.FilePanel(listing, s.uiView(r)), datastar.WithSelector("#file-panel"), datastar.WithModeReplace())
 	_ = sse.PatchElementTempl(views.Crumbs(listing.Prefix), datastar.WithSelector("#crumbs"), datastar.WithModeReplace())
 	_ = sse.PatchElementTempl(views.MetaBar(listing), datastar.WithSelector("#meta-bar"), datastar.WithModeReplace())
 	signals := map[string]any{
@@ -195,9 +219,13 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 		"newFolderName":  "",
 		"folderPassword": "",
 		"renameTo":       "",
+		"destPrefix":     "",
+		"targetKey":      "",
+		"targetName":     "",
 		"_showNewFolder": false,
 		"_showRename":    false,
 		"_showDelete":    false,
+		"_showMove":      false,
 		"_showUnlock":    false,
 		"_showProtect":   false,
 		"_showUnprotect": false,
@@ -235,6 +263,8 @@ func publicError(err error) string {
 		return "That name is reserved for trash."
 	case errors.Is(err, filesvc.ErrExists):
 		return "That name is already used here."
+	case errors.Is(err, filesvc.ErrInvalidMove):
+		return "Can't move a folder into itself."
 	case errors.Is(err, locks.ErrLocked):
 		return "Unlock this folder first."
 	case errors.Is(err, locks.ErrWrongPassword):

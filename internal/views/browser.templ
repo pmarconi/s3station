@@ -5,19 +5,19 @@ import (
 	"station/internal/models"
 )
 
-templ Browser(user string, listing models.Listing) {
+templ Browser(user string, listing models.Listing, view string) {
 	@Layout("Station") {
 		<div
 			class="drawer lg:drawer-open"
 			data-attr:data-current-prefix="$prefix"
 			data-attr:data-locked="$_locked"
-			data-signals={ InitialSignals(listing) }
+			data-signals={ InitialSignals(listing, view) }
 			data-on:station-upload-start__window="$_busy = true; $_flash = evt.detail.message; $_flashKind = 'ok'"
 			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
 			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-navigate__window="$_busy = true; $query = ''; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
-			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
+			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showMove = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
 			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
@@ -27,7 +27,7 @@ templ Browser(user string, listing models.Listing) {
 				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
 					@Toolbar(listing)
 					<div class="relative">
-						@FilePanel(listing)
+						@FilePanel(listing, view)
 						<div id="listing-loading" class="absolute inset-0 z-20 grid min-h-48 place-items-center rounded-box bg-base-200/70 backdrop-blur-[1px]" data-show="$_busy" style="display: none">
 							<div class="flex flex-col items-center gap-2">
 								<span class="loading loading-spinner loading-lg text-primary"></span>
@@ -152,10 +152,10 @@ templ Toolbar(listing models.Listing) {
 				</ul>
 			</div>
 			<div class="join">
-				<button class="btn join-item" data-class:btn-active="$view === 'grid'" data-on:click="$view = 'grid'" aria-label="Grid view">
+				<button class="btn join-item" data-class:btn-active="$view === 'grid'" data-on:click="$view = 'grid'; @post('/prefs')" aria-label="Grid view">
 					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg>
 				</button>
-				<button class="btn join-item" data-class:btn-active="$view === 'list'" data-on:click="$view = 'list'" aria-label="List view">
+				<button class="btn join-item" data-class:btn-active="$view === 'list'" data-on:click="$view = 'list'; @post('/prefs')" aria-label="List view">
 					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
 				</button>
 			</div>
@@ -190,8 +190,8 @@ templ MetaBar(listing models.Listing) {
 	</div>
 }
 
-templ FilePanel(listing models.Listing) {
-	<section id="file-panel" class="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" data-class:is-list="$view === 'list'">
+templ FilePanel(listing models.Listing, view string) {
+	<section id="file-panel" class={ "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6", templ.KV("is-list", view == "list") } data-class:is-list="$view === 'list'">
 		if listing.Locked {
 			<div class="col-span-full">
 				<div class="hero rounded-box border border-base-300 bg-base-100 py-16">
@@ -245,9 +245,10 @@ templ FileCard(e models.Entry) {
 			draggable="true"
 			data-station-key={ e.Key }
 		}
-		if e.Kind == models.KindImage && GallerySrc(e) != "" {
+		if InGallery(e) {
 			data-gallery-src={ GallerySrc(e) }
 			data-gallery-name={ e.Name }
+			data-gallery-kind={ string(e.Kind) }
 		}
 	>
 		<div class="file-tile-preview relative aspect-square w-full">
@@ -264,7 +265,7 @@ templ FileCard(e models.Entry) {
 						data-on:click={ FolderClickExpr(e) }
 						data-indicator:_busy
 					}
-					if !e.IsDir && e.Kind != models.KindImage {
+					if !e.IsDir && !InGallery(e) {
 						data-on:click={ PreviewExpr(e) }
 					}
 				>
@@ -273,32 +274,6 @@ templ FileCard(e models.Entry) {
 					</div>
 				</div>
 			}
-			<div class="absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100" data-on:click="evt.stopPropagation()">
-				<div class="dropdown dropdown-end">
-					<div tabindex="0" role="button" class="btn btn-circle btn-sm btn-neutral" aria-label="Item options">
-						<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"/></svg>
-					</div>
-					<ul tabindex="0" class="dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg">
-						if e.IsDir && e.Locked {
-							<li><button type="button" data-on:click={ UnlockExpr(e) }>Unlock</button></li>
-						} else if e.IsDir {
-							<li><a href={ templ.SafeURL(FolderHref(e.Key)) } data-on:click={ NavigateExpr(e.Key) }>Open</a></li>
-							<li><a href={ templ.SafeURL(ArchiveHref(e.Key)) }>Download zip</a></li>
-							<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
-							<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
-						} else {
-							if e.DownloadURL != "" {
-								<li><a href={ templ.SafeURL(e.DownloadURL) } target="_blank" rel="noreferrer">Open</a></li>
-							}
-							if e.SaveURL != "" {
-								<li><a href={ templ.SafeURL(e.SaveURL) } download={ e.Name } rel="noreferrer">Download</a></li>
-							}
-							<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
-							<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
-						}
-					</ul>
-				</div>
-			</div>
 		</div>
 		<div class="file-tile-meta mt-2 min-w-0">
 			if e.IsDir && !e.Locked {
@@ -308,7 +283,39 @@ templ FileCard(e models.Entry) {
 			}
 			<p class="truncate text-xs text-base-content/50">{ ItemMeta(e) }</p>
 		</div>
+		@FileCardActions(e)
 	</article>
+}
+
+templ FileCardActions(e models.Entry) {
+	<div class="file-tile-actions absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100" data-on:click="evt.stopPropagation()">
+		<div class="dropdown dropdown-end">
+			<div tabindex="0" role="button" class="btn btn-circle btn-sm btn-neutral" aria-label="Item options">
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"/></svg>
+			</div>
+			<ul tabindex="0" class="dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg">
+				if e.IsDir && e.Locked {
+					<li><button type="button" data-on:click={ UnlockExpr(e) }>Unlock</button></li>
+				} else if e.IsDir {
+					<li><a href={ templ.SafeURL(FolderHref(e.Key)) } data-on:click={ NavigateExpr(e.Key) }>Open</a></li>
+					<li><a href={ templ.SafeURL(ArchiveHref(e.Key)) }>Download zip</a></li>
+					<li><button type="button" data-on:click={ MoveExpr(e) }>Move to</button></li>
+					<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
+					<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
+				} else {
+					if e.DownloadURL != "" {
+						<li><a href={ templ.SafeURL(e.DownloadURL) } target="_blank" rel="noreferrer">Open</a></li>
+					}
+					if e.SaveURL != "" {
+						<li><a href={ templ.SafeURL(e.SaveURL) } download={ e.Name } rel="noreferrer">Download</a></li>
+					}
+					<li><button type="button" data-on:click={ MoveExpr(e) }>Move to</button></li>
+					<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
+					<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
+				}
+			</ul>
+		</div>
+	</div>
 }
 
 templ TilePreview(e models.Entry) {
@@ -364,19 +371,35 @@ templ BrowserModals() {
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Rename</h3>
 			<p class="py-2 text-base-content/70">Current name: <strong data-text="$targetName"></strong></p>
-			<form data-on:submit="@post('/files/rename')">
+			<form data-on:submit="$_busy = true; @post('/files/rename')" data-indicator:_busy>
 				<fieldset class="fieldset">
 					<legend class="fieldset-legend">New name</legend>
-					<input class="input input-bordered w-full" data-bind:renameTo required autocomplete="off"/>
+					<input class="input input-bordered w-full" data-bind:renameTo required autocomplete="off" data-attr:disabled="$_busy"/>
 				</fieldset>
 				<div class="modal-action">
-					<button type="button" class="btn" data-on:click="$_showRename = false">Cancel</button>
-					<button type="submit" class="btn btn-primary">Rename</button>
+					<button type="button" class="btn" data-on:click="$_showRename = false" data-attr:disabled="$_busy">Cancel</button>
+					<button type="submit" class="btn btn-primary" data-attr:disabled="$_busy">
+						<span class="loading loading-spinner loading-sm" data-show="$_busy" style="display: none"></span>
+						Rename
+					</button>
 				</div>
 			</form>
 		</div>
 		<form method="dialog" class="modal-backdrop">
 			<button type="button" data-on:click="$_showRename = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showMove">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Move to</h3>
+			<p class="py-2 text-base-content/70">Choose a folder for <strong data-text="$targetName"></strong>, then move it there.</p>
+			@MovePicker(models.Listing{}, "")
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showMove = false">Cancel</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showMove = false">close</button>
 		</form>
 	</dialog>
 	<dialog class="modal" data-attr:open="$_showNewFolder">
@@ -491,12 +514,17 @@ templ BrowserModals() {
 }
 
 templ GalleryModal() {
-	<dialog id="gallery-modal" class="modal">
-		<div class="modal-box flex max-h-[92vh] max-w-6xl flex-col bg-base-300 p-0">
-			<div class="flex items-center justify-between gap-3 px-4 py-3">
-				<div class="min-w-0">
+	<dialog id="gallery-modal" class="modal p-0">
+		<div class="modal-box flex h-dvh max-h-none w-screen max-w-none flex-col rounded-none bg-neutral p-0">
+			<div class="flex items-center gap-3 px-4 py-3">
+				<div class="min-w-0 flex-1">
 					<h3 id="gallery-title" class="truncate text-sm font-semibold"></h3>
 					<p id="gallery-count" class="text-xs text-base-content/60"></p>
+				</div>
+				<div id="gallery-zoom" class="join">
+					<button type="button" class="btn btn-sm btn-square join-item" id="gallery-zoom-out" aria-label="Zoom out">−</button>
+					<button type="button" class="btn btn-sm join-item min-w-16" id="gallery-zoom-reset">100%</button>
+					<button type="button" class="btn btn-sm btn-square join-item" id="gallery-zoom-in" aria-label="Zoom in">+</button>
 				</div>
 				<button type="button" class="btn btn-sm btn-circle btn-ghost" id="gallery-close" aria-label="Close gallery">✕</button>
 			</div>
@@ -510,6 +538,55 @@ templ GalleryModal() {
 			<button type="button" id="gallery-backdrop">close</button>
 		</form>
 	</dialog>
+}
+
+templ MovePicker(dest models.Listing, targetKey string) {
+	<div id="move-picker" class="grid gap-3">
+		if targetKey == "" && dest.Prefix == "" && len(dest.Entries) == 0 && !dest.Locked {
+			<p class="text-sm text-base-content/60">Loading folders…</p>
+		} else {
+			<div class="breadcrumbs py-0 text-sm">
+				<ul>
+					for _, c := range filesvc.Breadcrumbs(dest.Prefix) {
+						<li>
+							<button type="button" data-on:click={ PickerNavExpr(c.Prefix) }>{ c.Name }</button>
+						</li>
+					}
+				</ul>
+			</div>
+			if dest.Locked {
+				<p class="text-sm text-warning">This folder is locked. Pick another destination.</p>
+			} else if len(dest.Entries) == 0 {
+				<p class="text-sm text-base-content/60">No subfolders here.</p>
+			} else {
+				<ul class="menu max-h-64 overflow-y-auto rounded-box bg-base-200 p-1">
+					for _, e := range dest.Entries {
+						<li>
+							if CanEnterPicker(targetKey, e) {
+								<button type="button" data-on:click={ PickerNavExpr(e.Key) }>
+									<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+									{ e.Name }
+								</button>
+							} else {
+								<button type="button" disabled>
+									<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+									{ e.Name }
+								</button>
+							}
+						</li>
+					}
+				</ul>
+			}
+			if MoveHereDisabled(targetKey, dest.Prefix, dest.Locked) {
+				<button type="button" class="btn btn-primary btn-block" disabled>Move here</button>
+			} else {
+				<button type="button" class="btn btn-primary btn-block" data-on:click="$_busy = true; @post('/files/move')" data-indicator:_busy data-attr:disabled="$_busy">
+					<span class="loading loading-spinner loading-sm" data-show="$_busy" style="display: none"></span>
+					Move here
+				</button>
+			}
+		}
+	</div>
 }
 
 templ DropOverlay() {

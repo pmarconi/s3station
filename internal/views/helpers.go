@@ -19,16 +19,20 @@ func jsString(s string) string {
 	return string(b)
 }
 
-func InitialSignals(listing models.Listing) string {
+func InitialSignals(listing models.Listing, view string) string {
+	if view != "list" {
+		view = "grid"
+	}
 	b, err := json.Marshal(map[string]any{
 		"prefix":           listing.Prefix,
 		"newFolderName":    "",
 		"targetKey":        "",
 		"targetName":       "",
 		"targetBatch":      "",
+		"destPrefix":       "",
 		"folderPassword":   "",
 		"renameTo":         "",
-		"view":             "grid",
+		"view":             view,
 		"query":            "",
 		"refresh":          false,
 		"nav":              false,
@@ -38,6 +42,7 @@ func InitialSignals(listing models.Listing) string {
 		"_showNewFolder":   false,
 		"_showRename":      false,
 		"_showDelete":      false,
+		"_showMove":        false,
 		"_showPreview":     false,
 		"_showEmptyTrash":  false,
 		"_showPurgeThumbs": false,
@@ -107,6 +112,10 @@ func GallerySrc(e models.Entry) string {
 	return e.DownloadURL
 }
 
+func InGallery(e models.Entry) bool {
+	return (e.Kind == models.KindImage || e.Kind == models.KindVideo) && GallerySrc(e) != ""
+}
+
 func PreviewExpr(e models.Entry) string {
 	kind := string(e.Kind)
 	url := e.PreviewURL
@@ -126,6 +135,22 @@ func RenameExpr(e models.Entry) string {
 
 func TrashExpr(e models.Entry) string {
 	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $_showDelete = true", jsString(e.Key), jsString(e.Name))
+}
+
+func MoveExpr(e models.Entry) string {
+	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $destPrefix = $prefix; $_showMove = true; @get('/folders/picker')", jsString(e.Key), jsString(e.Name))
+}
+
+func PickerNavExpr(prefix string) string {
+	return fmt.Sprintf("$destPrefix = %s; @get('/folders/picker')", jsString(prefix))
+}
+
+func MoveHereDisabled(targetKey, destPrefix string, locked bool) bool {
+	return locked || storage.InvalidMoveDest(targetKey, destPrefix)
+}
+
+func CanEnterPicker(targetKey string, e models.Entry) bool {
+	return e.IsDir && !e.Locked && !storage.InvalidMoveDest(targetKey, e.Key)
 }
 
 func PurgeExpr(item models.TrashItem) string {

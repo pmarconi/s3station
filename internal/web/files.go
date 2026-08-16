@@ -76,7 +76,7 @@ func (s *Server) browser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, publicError(err), http.StatusBadRequest)
 		return
 	}
-	_ = views.Browser(currentUser(r), listing).Render(r.Context(), w)
+	_ = views.Browser(currentUser(r), listing, s.uiView(r)).Render(r.Context(), w)
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +237,27 @@ func normalizeSignalPrefix(prefix string) (string, error) {
 	return storage.NormalizePrefix(prefix)
 }
 
+func (s *Server) folderPicker(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	listing, err := s.files.ListFolders(r.Context(), sig.DestPrefix)
+	if err != nil {
+		s.log.Error("folder picker", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	sse := datastar.NewSSE(w, r)
+	_ = sse.PatchElementTempl(views.MovePicker(listing, sig.TargetKey), datastar.WithSelector("#move-picker"), datastar.WithModeReplace())
+}
+
 func (s *Server) move(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Datastar-Request") == "true" {
+		s.moveFromSignals(w, r)
+		return
+	}
 	var req struct {
 		Key        string `json:"key"`
 		DestPrefix string `json:"destPrefix"`
@@ -252,6 +272,25 @@ func (s *Server) move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) moveFromSignals(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	if err := s.files.Move(r.Context(), sig.TargetKey, sig.DestPrefix); err != nil {
+		s.log.Error("move", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(r.Context(), sig.Prefix, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	s.patchListing(w, r, listing, "Moved.", sig.Prefix, false)
 }
 
 func (s *Server) rename(w http.ResponseWriter, r *http.Request) {

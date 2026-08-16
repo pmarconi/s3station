@@ -83,6 +83,27 @@ func TestPublicFolderPath(t *testing.T) {
 	}
 }
 
+func TestInvalidMoveDest(t *testing.T) {
+	if !InvalidMoveDest("photos/cat.jpg", "photos/") {
+		t.Fatal("already in photos/")
+	}
+	if InvalidMoveDest("photos/cat.jpg", "") {
+		t.Fatal("file can move to depot root")
+	}
+	if InvalidMoveDest("photos/cat.jpg", "docs/") {
+		t.Fatal("file can move to another folder")
+	}
+	if !InvalidMoveDest("photos/", "photos/") {
+		t.Fatal("folder into itself")
+	}
+	if !InvalidMoveDest("photos/", "photos/italy/") {
+		t.Fatal("folder into descendant")
+	}
+	if InvalidMoveDest("photos/", "photostudio/") {
+		t.Fatal("similar name is not a descendant")
+	}
+}
+
 func TestUserRootKeys(t *testing.T) {
 	if AbsUserKey(FilesPrefix, "") != "files/" {
 		t.Fatal(AbsUserKey(FilesPrefix, ""))

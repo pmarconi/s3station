@@ -103,6 +103,23 @@ func JoinKey(prefix, name string) string {
 	return prefix + name
 }
 
+func InvalidMoveDest(src, destPrefix string) bool {
+	if key, err := NormalizeObjectKey(src); err == nil {
+		src = key
+	}
+	dest, err := NormalizePrefix(destPrefix)
+	if err != nil {
+		return true
+	}
+	if ParentPrefix(src) == dest {
+		return true
+	}
+	if IsFolderKey(src) && (dest == src || strings.HasPrefix(dest, src)) {
+		return true
+	}
+	return false
+}
+
 func ParentPrefix(key string) string {
 	key = strings.TrimRight(key, "/")
 	i := strings.LastIndex(key, "/")

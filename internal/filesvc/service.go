@@ -19,7 +19,10 @@ import (
 	"station/internal/thumbs"
 )
 
-var ErrExists = errors.New("that name is already used")
+var (
+	ErrExists      = errors.New("that name is already used")
+	ErrInvalidMove = errors.New("cannot move a folder into itself")
+)
 
 type Service struct {
 	s3         *s3store.Client
@@ -106,6 +109,21 @@ func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models
 	return listing, nil
 }
 
+func (s *Service) ListFolders(ctx context.Context, prefix string) (models.Listing, error) {
+	listing, err := s.List(ctx, prefix, false)
+	if err != nil {
+		return listing, err
+	}
+	dirs := make([]models.Entry, 0, len(listing.Entries))
+	for _, e := range listing.Entries {
+		if e.IsDir {
+			dirs = append(dirs, e)
+		}
+	}
+	listing.Entries = dirs
+	return listing, nil
+}
+
 func (s *Service) CreateFolder(ctx context.Context, prefix, name string) error {
 	prefix, err := storage.NormalizePrefix(prefix)
 	if err != nil {
@@ -163,7 +181,7 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 
 	if storage.IsFolderKey(src) {
 		if destPrefix == src || strings.HasPrefix(destPrefix, src) {
-			return fmt.Errorf("cannot move a folder into itself")
+			return ErrInvalidMove
 		}
 		name := storage.BaseName(src)
 		newPrefix := destPrefix + name + "/"
