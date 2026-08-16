@@ -16,11 +16,14 @@ templ Browser(user string, listing models.Listing) {
 			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
 			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+			data-on:station-navigate__window="$_busy = true; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
 			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
 			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
-				@Topbar(user, "Depot")
+				@Topbar(user) {
+					@Crumbs(listing.Prefix)
+				}
 				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
 					@Toolbar(listing)
 					<div class="relative">
@@ -44,15 +47,15 @@ templ Browser(user string, listing models.Listing) {
 	}
 }
 
-templ Topbar(user string, title string) {
+templ Topbar(user string) {
 	<header class="navbar sticky top-0 z-30 gap-2 border-b border-base-300 bg-base-100/90 px-4 shadow-sm backdrop-blur sm:px-6">
 		<div class="flex-none lg:hidden">
 			<label for="station-drawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
 				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block h-6 w-6 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
 			</label>
 		</div>
-		<div class="flex-1">
-			<span class="text-base font-semibold">{ title }</span>
+		<div class="min-w-0 flex-1">
+			{ children... }
 		</div>
 		<div class="flex-none gap-1">
 			<span class="loading loading-spinner loading-sm text-primary" data-show="$_busy" style="display: none"></span>
@@ -91,7 +94,7 @@ templ Sidebar(user string, active string) {
 			}
 			<ul class="menu mt-4 w-full">
 				<li class="menu-title">Browse</li>
-				<li><a class={ templ.KV("menu-active", active == "files") } href="/">All files</a></li>
+				<li><a class={ templ.KV("menu-active", active == "files") } href={ templ.SafeURL(FolderHref("")) }>All files</a></li>
 				<li><a class={ templ.KV("menu-active", active == "trash") } href="/trash">Trash</a></li>
 			</ul>
 		</div>
@@ -111,8 +114,7 @@ templ Sidebar(user string, active string) {
 
 templ Toolbar(listing models.Listing) {
 	<section id="toolbar" class="mb-5">
-		@Crumbs(listing.Prefix)
-		<div class="mt-2 flex flex-wrap items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
 			<label class="input input-bordered flex min-w-52 flex-1 items-center gap-2">
 				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="size-4 opacity-70"><path fill-rule="evenodd" d="M9.965 11.026a5 5 0 1 1 1.06-1.06l2.755 2.754a.75.75 0 1 1-1.06 1.06l-2.755-2.754ZM10.5 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z" clip-rule="evenodd"/></svg>
 				<input type="search" class="grow" placeholder="Search this folder" data-bind:query/>
@@ -163,11 +165,11 @@ templ Toolbar(listing models.Listing) {
 }
 
 templ Crumbs(prefix string) {
-	<div id="crumbs" class="breadcrumbs text-sm">
-		<ul>
+	<div id="crumbs" class="breadcrumbs min-w-0 py-0 text-sm">
+		<ul class="flex-nowrap overflow-x-auto">
 			for _, c := range filesvc.Breadcrumbs(prefix) {
 				<li>
-					<a data-station-folder={ c.Prefix } data-on:click={ NavigateExpr(c.Prefix) } data-indicator:_busy>{ c.Name }</a>
+					<a class="font-semibold" href={ templ.SafeURL(FolderHref(c.Prefix)) } data-station-folder={ c.Prefix } data-on:click={ NavigateExpr(c.Prefix) } data-indicator:_busy>{ c.Name }</a>
 				</li>
 			}
 		</ul>
@@ -248,19 +250,29 @@ templ FileCard(e models.Entry) {
 			data-gallery-name={ e.Name }
 		}
 	>
-		<div
-			class="file-tile-preview relative aspect-square w-full cursor-pointer"
-			if e.IsDir {
-				data-on:click={ FolderClickExpr(e) }
-				data-indicator:_busy
+		<div class="file-tile-preview relative aspect-square w-full">
+			if e.IsDir && !e.Locked {
+				<a href={ templ.SafeURL(FolderHref(e.Key)) } class="block h-full w-full cursor-pointer" data-on:click={ NavigateExpr(e.Key) } data-indicator:_busy>
+					<div class="h-full w-full overflow-hidden rounded-xl bg-base-100">
+						@TilePreview(e)
+					</div>
+				</a>
+			} else {
+				<div
+					class="h-full w-full cursor-pointer"
+					if e.IsDir {
+						data-on:click={ FolderClickExpr(e) }
+						data-indicator:_busy
+					}
+					if !e.IsDir && e.Kind != models.KindImage {
+						data-on:click={ PreviewExpr(e) }
+					}
+				>
+					<div class="h-full w-full overflow-hidden rounded-xl bg-base-100">
+						@TilePreview(e)
+					</div>
+				</div>
 			}
-			if !e.IsDir && e.Kind != models.KindImage {
-				data-on:click={ PreviewExpr(e) }
-			}
-		>
-			<div class="h-full w-full overflow-hidden rounded-xl bg-base-100">
-				@TilePreview(e)
-			</div>
 			<div class="absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100" data-on:click="evt.stopPropagation()">
 				<div class="dropdown dropdown-end">
 					<div tabindex="0" role="button" class="btn btn-circle btn-sm btn-neutral" aria-label="Item options">
@@ -270,7 +282,7 @@ templ FileCard(e models.Entry) {
 						if e.IsDir && e.Locked {
 							<li><button type="button" data-on:click={ UnlockExpr(e) }>Unlock</button></li>
 						} else if e.IsDir {
-							<li><button type="button" data-on:click={ NavigateExpr(e.Key) }>Open</button></li>
+							<li><a href={ templ.SafeURL(FolderHref(e.Key)) } data-on:click={ NavigateExpr(e.Key) }>Open</a></li>
 							<li><a href={ templ.SafeURL(ArchiveHref(e.Key)) }>Download zip</a></li>
 							<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
 							<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
@@ -289,7 +301,11 @@ templ FileCard(e models.Entry) {
 			</div>
 		</div>
 		<div class="file-tile-meta mt-2 min-w-0">
-			<p class="truncate text-sm font-medium" title={ e.Name }>{ e.Name }</p>
+			if e.IsDir && !e.Locked {
+				<a href={ templ.SafeURL(FolderHref(e.Key)) } class="block truncate text-sm font-medium hover:text-primary" title={ e.Name } data-on:click={ NavigateExpr(e.Key) }>{ e.Name }</a>
+			} else {
+				<p class="truncate text-sm font-medium" title={ e.Name }>{ e.Name }</p>
+			}
 			<p class="truncate text-xs text-base-content/50">{ ItemMeta(e) }</p>
 		</div>
 	</article>

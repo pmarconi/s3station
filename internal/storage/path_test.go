@@ -57,6 +57,32 @@ func TestSanitizeRelPath(t *testing.T) {
 	}
 }
 
+func TestPublicFolderPath(t *testing.T) {
+	if PublicFolderPath("") != "/files/" {
+		t.Fatal(PublicFolderPath(""))
+	}
+	if PublicFolderPath("photos/italy/") != "/files/photos/italy/" {
+		t.Fatal(PublicFolderPath("photos/italy/"))
+	}
+	got, ok := PrefixFromRequestPath("/files/photos/italy/")
+	if !ok || got != "photos/italy/" {
+		t.Fatalf("%q %v", got, ok)
+	}
+	got, ok = PrefixFromRequestPath("/files/")
+	if !ok || got != "" {
+		t.Fatalf("root %q %v", got, ok)
+	}
+	if _, ok := PrefixFromRequestPath("/settings"); ok {
+		t.Fatal("settings is an app route")
+	}
+	if _, ok := PrefixFromRequestPath("/photos/italy/"); ok {
+		t.Fatal("folder paths must start with /files/")
+	}
+	if _, ok := PrefixFromRequestPath("/thumbs/x.webp"); ok {
+		t.Fatal("thumbs is an app route")
+	}
+}
+
 func TestUserRootKeys(t *testing.T) {
 	if AbsUserKey(FilesPrefix, "") != "files/" {
 		t.Fatal(AbsUserKey(FilesPrefix, ""))

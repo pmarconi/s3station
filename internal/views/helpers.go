@@ -8,6 +8,7 @@ import (
 
 	"station/internal/filesvc"
 	"station/internal/models"
+	"station/internal/storage"
 )
 
 func jsString(s string) string {
@@ -30,6 +31,7 @@ func InitialSignals(listing models.Listing) string {
 		"view":             "grid",
 		"query":            "",
 		"refresh":          false,
+		"nav":              false,
 		"_busy":            false,
 		"_flash":           "",
 		"_flashKind":       "ok",
@@ -75,8 +77,12 @@ func AvatarInitials(user string) string {
 	return strings.ToUpper(string([]rune(parts[0])[0]) + string([]rune(parts[1])[0]))
 }
 
+func FolderHref(prefix string) string {
+	return storage.PublicFolderPath(prefix)
+}
+
 func NavigateExpr(prefix string) string {
-	return fmt.Sprintf("$_busy = true; $prefix = %s; $refresh = false; @get('/files')", jsString(prefix))
+	return fmt.Sprintf("if(evt.metaKey||evt.ctrlKey||evt.shiftKey||evt.altKey) return; evt.preventDefault(); $_busy = true; $prefix = %s; $refresh = false; $nav = true; @get('/files')", jsString(prefix))
 }
 
 func UnlockExpr(e models.Entry) string {

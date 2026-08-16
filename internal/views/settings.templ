@@ -5,7 +5,7 @@ import "station/internal/models"
 templ SettingsNav(user string) {
 	<header class="navbar sticky top-0 z-30 gap-2 border-b border-base-300 bg-base-100/90 px-4 shadow-sm backdrop-blur sm:px-6">
 		<div class="flex-1 gap-2">
-			<a href="/" class="btn btn-ghost btn-sm">
+			<a href={ templ.SafeURL(FolderHref("")) } class="btn btn-ghost btn-sm">
 				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
 				Back to depot
 			</a>

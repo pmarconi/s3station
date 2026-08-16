@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -17,8 +19,57 @@ import (
 	"station/internal/views"
 )
 
+func applyListingURL(sse *datastar.ServerSentEventGenerator, prefix string, push bool) {
+	path := storage.PublicFolderPath(prefix)
+	u := url.URL{Path: path}
+	if !push {
+		_ = sse.ReplaceURL(u)
+		return
+	}
+	_ = sse.ExecuteScript(fmt.Sprintf(
+		`if(location.pathname!==%s){history.pushState({prefix:%s},"",%s)}`,
+		strconv.Quote(path),
+		strconv.Quote(prefix),
+		strconv.Quote(path),
+	))
+}
+
+func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	if q := r.URL.Query().Get("prefix"); q != "" {
+		http.Redirect(w, r, storage.PublicFolderPath(q), http.StatusMovedPermanently)
+		return
+	}
+	http.Redirect(w, r, storage.PublicFolderPath(""), http.StatusSeeOther)
+}
+
+func (s *Server) filesRoot(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Datastar-Request") == "true" {
+		s.listFiles(w, r)
+		return
+	}
+	if q := r.URL.Query().Get("prefix"); q != "" {
+		http.Redirect(w, r, storage.PublicFolderPath(q), http.StatusMovedPermanently)
+		return
+	}
+	http.Redirect(w, r, storage.PublicFolderPath(""), http.StatusMovedPermanently)
+}
+
 func (s *Server) browser(w http.ResponseWriter, r *http.Request) {
-	prefix := r.URL.Query().Get("prefix")
+	if q := r.URL.Query().Get("prefix"); q != "" {
+		http.Redirect(w, r, storage.PublicFolderPath(q), http.StatusMovedPermanently)
+		return
+	}
+	prefix := ""
+	if p, ok := storage.PrefixFromRequestPath(r.URL.Path); ok {
+		prefix = p
+	} else {
+		http.NotFound(w, r)
+		return
+	}
+	if prefix != "" && !strings.HasSuffix(r.URL.Path, "/") {
+		http.Redirect(w, r, storage.PublicFolderPath(prefix), http.StatusMovedPermanently)
+		return
+	}
 	listing, err := s.files.List(r.Context(), prefix, false)
 	if err != nil {
 		s.log.Error("list", "err", err)
@@ -58,7 +109,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
 	if sig.Refresh {
 		msg = "Folder reloaded from the bucket."
 	}
-	s.patchListing(w, r, listing, msg)
+	s.patchListing(w, r, listing, msg, sig.Nav && !sig.Refresh)
 }
 
 func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +128,7 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Folder created.")
+	s.patchListing(w, r, listing, "Folder created.", false)
 }
 
 func (s *Server) folderArchive(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +172,7 @@ func (s *Server) protectFolder(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Folder is now password protected in the UI.")
+	s.patchListing(w, r, listing, "Folder is now password protected in the UI.", false)
 }
 
 func (s *Server) unprotectFolder(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +191,7 @@ func (s *Server) unprotectFolder(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Password removed. Anyone signed in can open this folder.")
+	s.patchListing(w, r, listing, "Password removed. Anyone signed in can open this folder.", false)
 }
 
 func (s *Server) unlockFolder(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +224,7 @@ func (s *Server) unlockFolder(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Folder unlocked for this session.")
+	s.patchListing(w, r, listing, "Folder unlocked for this session.", false)
 }
 
 func (s *Server) withUnlock(r *http.Request, prefix string) *http.Request {
@@ -219,7 +270,7 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Renamed.")
+	s.patchListing(w, r, listing, "Renamed.", false)
 }
 
 func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +289,7 @@ func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Moved to trash. Permanent delete is in Settings.")
+	s.patchListing(w, r, listing, "Moved to trash. Permanent delete is in Settings.", false)
 }
 
 func (s *Server) purgeCache(w http.ResponseWriter, r *http.Request) {

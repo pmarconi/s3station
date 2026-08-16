@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -30,6 +29,7 @@ type Signals struct {
 	FolderPassword string `json:"folderPassword"`
 	RenameTo       string `json:"renameTo"`
 	Refresh        bool   `json:"refresh"`
+	Nav            bool   `json:"nav"`
 }
 
 type Server struct {
@@ -60,10 +60,12 @@ func New(cfg config.Config, sessions *session.Store, files *filesvc.Service, log
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAuth)
-		r.Get("/", s.browser)
+		r.Get("/", s.home)
 		r.Get("/trash", s.trashPage)
 		r.Get("/settings", s.settings)
-		r.Get("/files", s.listFiles)
+		r.Get("/files", s.filesRoot)
+		r.Get("/files/", s.browser)
+		r.Get("/files/*", s.browser)
 		r.Post("/folders", s.createFolder)
 		r.Post("/folders/protect", s.protectFolder)
 		r.Post("/folders/unprotect", s.unprotectFolder)
@@ -116,7 +118,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok, _ := s.sessions.Username(r.Context(), session.TokenFromRequest(r)); ok {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, storage.PublicFolderPath(""), http.StatusSeeOther)
 		return
 	}
 	msg := ""
@@ -149,7 +151,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sessions.SetCookie(w, token)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, storage.PublicFolderPath(""), http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +183,7 @@ func (s *Server) flash(sse *datastar.ServerSentEventGenerator, kind, msg string)
 	})
 }
 
-func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing models.Listing, msg string) {
+func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing models.Listing, msg string, push bool) {
 	sse := datastar.NewSSE(w, r)
 	_ = sse.PatchElementTempl(views.FilePanel(listing), datastar.WithSelector("#file-panel"), datastar.WithModeReplace())
 	_ = sse.PatchElementTempl(views.Crumbs(listing.Prefix), datastar.WithSelector("#crumbs"), datastar.WithModeReplace())
@@ -189,43 +191,35 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 	_ = sse.MarshalAndPatchSignals(map[string]any{
 		"prefix":         listing.Prefix,
 		"refresh":        false,
-		"newFolderName":    "",
-		"folderPassword":   "",
-		"renameTo":         "",
-		"_showNewFolder":   false,
-		"_showRename":      false,
-		"_showDelete":      false,
-		"_showUnlock":      false,
-		"_showProtect":     false,
-		"_showUnprotect":   false,
-		"_locked":          listing.Locked,
-		"_protected":       listing.Protected,
-		"_busy":            false,
-		"_flash":           msg,
-		"_flashKind":       "ok",
+		"nav":            false,
+		"newFolderName":  "",
+		"folderPassword": "",
+		"renameTo":       "",
+		"_showNewFolder": false,
+		"_showRename":    false,
+		"_showDelete":    false,
+		"_showUnlock":    false,
+		"_showProtect":   false,
+		"_showUnprotect": false,
+		"_locked":        listing.Locked,
+		"_protected":     listing.Protected,
+		"_busy":          false,
+		"_flash":         msg,
+		"_flashKind":     "ok",
 	})
-	u := *r.URL
-	u.Path = "/"
-	if listing.Prefix != "" {
-		q := url.Values{}
-		q.Set("prefix", listing.Prefix)
-		u.RawQuery = q.Encode()
-	} else {
-		u.RawQuery = ""
-	}
-	_ = sse.ReplaceURL(u)
+	applyListingURL(sse, listing.Prefix, push)
 }
 
 func (s *Server) patchTrash(w http.ResponseWriter, r *http.Request, items []models.TrashItem, msg string) {
 	sse := datastar.NewSSE(w, r)
 	_ = sse.PatchElementTempl(views.TrashPanel(items), datastar.WithSelector("#trash-panel"), datastar.WithModeReplace())
 	_ = sse.MarshalAndPatchSignals(map[string]any{
-		"targetBatch":     "",
-		"_showDelete":     false,
+		"targetBatch":      "",
+		"_showDelete":      false,
 		"_showEmptyTrash":  false,
 		"_showPurgeThumbs": false,
-		"_flash":          msg,
-		"_flashKind":      "ok",
+		"_flash":           msg,
+		"_flashKind":       "ok",
 	})
 }
 
@@ -253,4 +247,3 @@ func publicError(err error) string {
 		return "Something went wrong."
 	}
 }
-

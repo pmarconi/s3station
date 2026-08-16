@@ -2,17 +2,17 @@
 
 This app uses [Datastar](https://data-star.dev) for in-page UI: folder navigation, modals, flashes, and trash/settings actions. The script is local: `/static/js/datastar.js` (embedded). Official reference: `docs/context/datastar-docs.md` and https://data-star.dev/docs
 
-Vanilla JS (`upload.js`, `gallery.js`) handles S3 uploads, drag-and-drop, and the image gallery. Those are not Datastar.
+Vanilla JS (`upload.js`, `gallery.js`, `nav.js`) handles S3 uploads, drag-and-drop, the image gallery, and browser back/forward (`popstate` → `station-navigate`). Those are not Datastar.
 
 ## Page loads vs patches
 
-Full HTML (templ `Layout`): `GET /`, `GET /trash`, `GET /settings`, `GET /login`.
+Full HTML (templ `Layout`): `GET /files/`, `GET /files/{folder}/…`, `GET /trash`, `GET /settings`, `GET /login`. `GET /` redirects to `/files/`.
 
 Datastar SSE patches (same page, morph/replace fragments):
 
 | Client | Server | Patches |
 | --- | --- | --- |
-| `@get('/files')` | `listFiles` | `#file-panel`, `#crumbs`, `#meta-bar` + signals + `ReplaceURL` |
+| `@get('/files')` | `listFiles` (Datastar `GET /files`) | `#file-panel`, `#crumbs`, `#meta-bar` + signals + folder URL (`pushState` when `$nav`) |
 | `@post('/folders')` | `createFolder` | same as listing |
 | `@post('/folders/unlock'\|'protect'\|'unprotect')` | lock handlers | same as listing |
 | `@post('/files/trash')` | `trash` | listing |
@@ -20,7 +20,7 @@ Datastar SSE patches (same page, morph/replace fragments):
 | `@post('/trash/restore'\|'purge'\|'empty')` | trash handlers | `#trash-panel` + signals |
 | `@post('/thumbs/purge')` | `purgeThumbs` | flash |
 
-Depot objects are stored under `files/` in the bucket (`FILES_PREFIX`). UI paths stay relative to that root.
+Depot objects are stored under `files/` in the bucket (`FILES_PREFIX`). The browser URL is `/files/` plus that relative path (`/files/photos/italy/`). Other app pages stay at the root (`/trash`, `/settings`, …). A non-Datastar `GET /files` redirects to `/files/`.
 
 Do **not** use `@get` / `@post` for binary or JSON APIs:
 
@@ -34,7 +34,7 @@ If `Datastar-Request: true` and the session is dead, redirect with `sse.Redirect
 
 Initialized once on the page root with `data-signals={ InitialSignals(...) }` in `internal/views/helpers.go`.
 
-Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `folderPassword`, `refresh`.
+Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `folderPassword`, `refresh`, `nav`. `$nav` is true only for in-page folder clicks (history `pushState`); reloads and mutations `replaceState` the same path.
 
 The rest is frontend-only. Names starting with `_` are UI state (`_busy`, `_flash`, `_showDelete`, `_locked`, …).
 
@@ -55,7 +55,7 @@ Keep new signals in `InitialSignals` **and** reset them in `patchListing` / `pat
 Expressions that need a Go value (object key, name) are built in helpers (`NavigateExpr`, `TrashExpr`, …) with `jsString` so quotes are safe:
 
 ```
-$_busy = true; $prefix = "photos/"; $refresh = false; @get('/files')
+$_busy = true; $prefix = "photos/"; $refresh = false; $nav = true; @get('/files')
 ```
 
 ## Server patches
@@ -66,7 +66,7 @@ _ = sse.PatchElementTempl(views.FilePanel(listing),
     datastar.WithSelector("#file-panel"),
     datastar.WithModeReplace())
 _ = sse.MarshalAndPatchSignals(map[string]any{ /* … */ })
-_ = sse.ReplaceURL(u) // folder nav only
+applyListingURL(sse, listing.Prefix, push) // /files/photos/italy/ via pushState or replaceState
 ```
 
 The patched root must keep a stable `id` (`#file-panel`, `#trash-panel`, `#crumbs`, `#meta-bar`). If the control that should update lives **outside** that id (for example Empty trash), put it inside the panel or patch a second selector.

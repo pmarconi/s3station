@@ -11,7 +11,9 @@ templ Trash(user string, items []models.TrashItem) {
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
 			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
-				@Topbar(user, "Trash")
+				@Topbar(user) {
+					<span class="text-base font-semibold">Trash</span>
+				}
 				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
 					@TrashPanel(items)
 				</main>

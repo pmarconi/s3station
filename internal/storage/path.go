@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	FilesPrefix = "files/"
-	TrashPrefix = ".station-trash/"
-	ThumbPrefix = ".station-thumbs/"
+	FilesPrefix  = "files/"
+	BrowserRoute = "files"
+	TrashPrefix  = ".station-trash/"
+	ThumbPrefix  = ".station-thumbs/"
 )
 
 var (
@@ -151,6 +152,55 @@ func IsReservedName(name string) bool {
 	default:
 		return false
 	}
+}
+
+func IsRouteName(name string) bool {
+	switch strings.ToLower(name) {
+	case "trash", "settings", "login", "logout", "healthz", "static", "files", "thumbs":
+		return true
+	default:
+		return false
+	}
+}
+
+func PublicFolderPath(prefix string) string {
+	prefix = strings.Trim(prefix, "/")
+	if prefix == "" {
+		return "/" + BrowserRoute + "/"
+	}
+	parts := strings.Split(prefix, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return "/" + BrowserRoute + "/" + strings.Join(parts, "/") + "/"
+}
+
+func PrefixFromRequestPath(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+	path = strings.Trim(path, "/")
+	if path == "" || path != BrowserRoute && !strings.HasPrefix(path, BrowserRoute+"/") {
+		return "", false
+	}
+	if path == BrowserRoute {
+		return "", true
+	}
+	rest := strings.TrimPrefix(path, BrowserRoute+"/")
+	if rest == "" {
+		return "", true
+	}
+	parts := strings.Split(rest, "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part, err := url.PathUnescape(part)
+		if err != nil || part == "" || part == "." || part == ".." || strings.Contains(part, "..") {
+			return "", false
+		}
+		clean = append(clean, part)
+	}
+	return strings.Join(clean, "/") + "/", true
 }
 
 func IsTrashKey(key string) bool {
