@@ -55,7 +55,7 @@ Keep new signals in `InitialSignals` **and** reset them in `patchListing` / `pat
 Expressions that need a Go value (object key, name) are built in helpers (`NavigateExpr`, `TrashExpr`, …) with `jsString` so quotes are safe:
 
 ```
-$_busy = true; $prefix = "photos/"; $refresh = false; $nav = true; @get('/files')
+$_busy = true; $query = ''; $prefix = "photos/"; $refresh = false; $nav = true; @get('/files')
 ```
 
 ## Server patches

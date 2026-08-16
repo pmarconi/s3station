@@ -82,7 +82,7 @@ func FolderHref(prefix string) string {
 }
 
 func NavigateExpr(prefix string) string {
-	return fmt.Sprintf("if(evt.metaKey||evt.ctrlKey||evt.shiftKey||evt.altKey) return; evt.preventDefault(); $_busy = true; $prefix = %s; $refresh = false; $nav = true; @get('/files')", jsString(prefix))
+	return fmt.Sprintf("if(evt.metaKey||evt.ctrlKey||evt.shiftKey||evt.altKey) return; evt.preventDefault(); $_busy = true; $query = ''; $prefix = %s; $refresh = false; $nav = true; @get('/files')", jsString(prefix))
 }
 
 func UnlockExpr(e models.Entry) string {

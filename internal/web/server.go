@@ -183,12 +183,12 @@ func (s *Server) flash(sse *datastar.ServerSentEventGenerator, kind, msg string)
 	})
 }
 
-func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing models.Listing, msg string, push bool) {
+func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing models.Listing, msg string, prevPrefix string, push bool) {
 	sse := datastar.NewSSE(w, r)
 	_ = sse.PatchElementTempl(views.FilePanel(listing), datastar.WithSelector("#file-panel"), datastar.WithModeReplace())
 	_ = sse.PatchElementTempl(views.Crumbs(listing.Prefix), datastar.WithSelector("#crumbs"), datastar.WithModeReplace())
 	_ = sse.PatchElementTempl(views.MetaBar(listing), datastar.WithSelector("#meta-bar"), datastar.WithModeReplace())
-	_ = sse.MarshalAndPatchSignals(map[string]any{
+	signals := map[string]any{
 		"prefix":         listing.Prefix,
 		"refresh":        false,
 		"nav":            false,
@@ -206,7 +206,11 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 		"_busy":          false,
 		"_flash":         msg,
 		"_flashKind":     "ok",
-	})
+	}
+	if push || listing.Prefix != prevPrefix {
+		signals["query"] = ""
+	}
+	_ = sse.MarshalAndPatchSignals(signals)
 	applyListingURL(sse, listing.Prefix, push)
 }
 

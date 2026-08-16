@@ -16,7 +16,7 @@ templ Browser(user string, listing models.Listing) {
 			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
 			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
-			data-on:station-navigate__window="$_busy = true; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
+			data-on:station-navigate__window="$_busy = true; $query = ''; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
 			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
