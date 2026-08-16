@@ -2,10 +2,18 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/starfederation/datastar-go/datastar"
 
+	"station/internal/filesvc"
+	"station/internal/locks"
+	"station/internal/session"
+	"station/internal/storage"
 	"station/internal/views"
 )
 
@@ -21,13 +29,17 @@ func (s *Server) browser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
+	_ = views.Settings(currentUser(r)).Render(r.Context(), w)
+}
+
+func (s *Server) trashPage(w http.ResponseWriter, r *http.Request) {
 	items, err := s.files.ListTrash(r.Context())
 	if err != nil {
 		s.log.Error("list trash", "err", err)
 		http.Error(w, publicError(err), http.StatusBadGateway)
 		return
 	}
-	_ = views.Settings(currentUser(r), items).Render(r.Context(), w)
+	_ = views.Trash(currentUser(r), items).Render(r.Context(), w)
 }
 
 func (s *Server) listFiles(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +80,112 @@ func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	s.patchListing(w, r, listing, "Folder created.")
 }
 
+func (s *Server) folderArchive(w http.ResponseWriter, r *http.Request) {
+	arch, err := s.files.PrepareFolderArchive(r.Context(), r.URL.Query().Get("prefix"))
+	if err != nil {
+		s.log.Error("folder archive", "err", err)
+		status := http.StatusBadRequest
+		if errors.Is(err, locks.ErrLocked) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, publicError(err), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", filesvc.AttachmentDisposition(arch.Filename))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	if err := s.files.WriteFolderArchive(r.Context(), arch, w); err != nil {
+		s.log.Error("write folder archive", "prefix", arch.Prefix, "err", err)
+	}
+}
+
+func (s *Server) protectFolder(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	if err := s.files.ProtectFolder(r.Context(), sig.Prefix, sig.FolderPassword); err != nil {
+		s.log.Error("protect folder", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	prefix, _ := normalizeSignalPrefix(sig.Prefix)
+	if err := s.sessions.UnlockFolder(r.Context(), session.TokenFromRequest(r), prefix); err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(s.withUnlock(r, prefix).Context(), sig.Prefix, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	s.patchListing(w, r, listing, "Folder is now password protected in the UI.")
+}
+
+func (s *Server) unprotectFolder(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	if err := s.files.UnprotectFolder(r.Context(), sig.Prefix, sig.FolderPassword); err != nil {
+		s.log.Error("unprotect folder", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(r.Context(), sig.Prefix, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	s.patchListing(w, r, listing, "Password removed. Anyone signed in can open this folder.")
+}
+
+func (s *Server) unlockFolder(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	ok, err := s.sessions.AllowUnlock(r.Context(), session.ClientIP(r))
+	if err != nil || !ok {
+		s.flash(datastar.NewSSE(w, r), "bad", "Too many unlock attempts. Try again in a few minutes.")
+		return
+	}
+	target := sig.TargetKey
+	if target == "" {
+		target = sig.Prefix
+	}
+	unlockedPrefix, err := s.files.UnlockFolder(r.Context(), target, sig.FolderPassword)
+	if err != nil {
+		s.log.Error("unlock folder", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	if err := s.sessions.UnlockFolder(r.Context(), session.TokenFromRequest(r), unlockedPrefix); err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(s.withUnlock(r, unlockedPrefix).Context(), target, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	s.patchListing(w, r, listing, "Folder unlocked for this session.")
+}
+
+func (s *Server) withUnlock(r *http.Request, prefix string) *http.Request {
+	current := append([]string{}, locks.Unlocked(r.Context())...)
+	current = append(current, prefix)
+	return r.WithContext(locks.WithUnlocked(r.Context(), current))
+}
+
+func normalizeSignalPrefix(prefix string) (string, error) {
+	return storage.NormalizePrefix(prefix)
+}
+
 func (s *Server) move(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Key        string `json:"key"`
@@ -83,6 +201,25 @@ func (s *Server) move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	if err := s.files.Rename(r.Context(), sig.TargetKey, sig.RenameTo); err != nil {
+		s.log.Error("rename", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(r.Context(), sig.Prefix, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	s.patchListing(w, r, listing, "Renamed.")
 }
 
 func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +248,22 @@ func (s *Server) purgeCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.flash(datastar.NewSSE(w, r), "ok", "All folder listings were dropped from Postgres.")
+}
+
+func (s *Server) purgeThumbs(w http.ResponseWriter, r *http.Request) {
+	n, err := s.files.PurgeThumbs(r.Context())
+	if err != nil {
+		s.log.Error("purge thumbs", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	msg := "No generated thumbnails were in the bucket."
+	if n == 1 {
+		msg = "Deleted 1 thumbnail from the bucket."
+	} else if n > 1 {
+		msg = fmt.Sprintf("Deleted %d thumbnails from the bucket.", n)
+	}
+	s.flash(datastar.NewSSE(w, r), "ok", msg)
 }
 
 func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
@@ -183,17 +336,46 @@ func (s *Server) presign(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) complete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Keys   []string `json:"keys"`
-		Prefix string   `json:"prefix"`
+		Keys    []string `json:"keys"`
+		Prefix  string   `json:"prefix"`
+		Folders []string `json:"folders"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	if err := s.files.CompleteUploads(r.Context(), req.Keys); err != nil {
+	if err := s.files.CompleteUploads(r.Context(), req.Prefix, req.Keys, req.Folders); err != nil {
 		s.log.Error("complete", "err", err)
 		http.Error(w, publicError(err), http.StatusBadGateway)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	thumbKey, err := storage.ThumbKeyFromPublic(rest)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	data, contentType, etag, err := s.files.ServeThumb(r.Context(), thumbKey)
+	if err != nil {
+		if errors.Is(err, locks.ErrLocked) {
+			http.Error(w, "locked", http.StatusForbidden)
+			return
+		}
+		s.log.Error("thumb", "key", thumbKey, "err", err)
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=604800")
+	w.Header().Set("ETag", etag)
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

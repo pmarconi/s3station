@@ -24,6 +24,7 @@ type Config struct {
 	S3Endpoint   string
 	S3PublicURL  string
 	S3PathStyle  bool
+	FilesPrefix  string
 
 	MaxUploadBytes int64
 	PresignTTL     time.Duration
@@ -44,6 +45,7 @@ func Load() (Config, error) {
 		S3Endpoint:     os.Getenv("S3_ENDPOINT"),
 		S3PublicURL:    firstEnv("S3_PUBLIC_ENDPOINT", "S3_PUBLIC_URL"),
 		S3PathStyle:    envBool("S3_USE_PATH_STYLE", false),
+		FilesPrefix:    normalizeFilesPrefix(env("FILES_PREFIX", "files")),
 		MaxUploadBytes: envInt64("MAX_UPLOAD_BYTES", 5*1024*1024*1024),
 		PresignTTL:     envDuration("PRESIGN_TTL", 15*time.Minute),
 	}
@@ -68,6 +70,15 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
 	}
 	return cfg, nil
+}
+
+func normalizeFilesPrefix(p string) string {
+	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
+	p = strings.Trim(p, "/")
+	if p == "" {
+		p = "files"
+	}
+	return p + "/"
 }
 
 func env(key, fallback string) string {

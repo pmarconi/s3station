@@ -41,7 +41,7 @@ func Login(errMsg string) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"hero min-h-screen\"><div class=\"hero-content\"><div class=\"card bg-base-100 shadow-sm\"><div class=\"card-body\"><h1 class=\"card-title\">Station</h1><p>Sign in to browse the bucket. Files upload straight to S3 — this server never keeps a copy.</p>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"hero bg-base-200 min-h-screen\"><div class=\"hero-content\"><div class=\"card bg-base-100 shadow-sm\"><div class=\"card-body\"><p class=\"badge badge-primary\">Private depot</p><h1 class=\"card-title\">Station</h1><p class=\"text-base-content/70\">Sign in to browse the bucket. Files upload straight to S3 — this server never keeps a copy.</p>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -53,7 +53,7 @@ func Login(errMsg string) templ.Component {
 				var templ_7745c5c3_Var3 string
 				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(errMsg)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/login.templ`, Line: 12, Col: 59}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/login.templ`, Line: 13, Col: 59}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
@@ -64,7 +64,7 @@ func Login(errMsg string) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<form method=\"post\" action=\"/login\"><fieldset class=\"fieldset\"><legend class=\"fieldset-legend\">Username</legend> <input class=\"input\" type=\"text\" name=\"username\" autocomplete=\"username\" required autofocus></fieldset><fieldset class=\"fieldset\"><legend class=\"fieldset-legend\">Password</legend> <input class=\"input\" type=\"password\" name=\"password\" autocomplete=\"current-password\" required></fieldset><div class=\"card-actions\"><button type=\"submit\" class=\"btn btn-primary\">Enter depot</button></div></form></div></div></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<form method=\"post\" action=\"/login\"><fieldset class=\"fieldset\"><legend class=\"fieldset-legend\">Username</legend> <input class=\"input input-bordered\" type=\"text\" name=\"username\" autocomplete=\"username\" required autofocus></fieldset><fieldset class=\"fieldset\"><legend class=\"fieldset-legend\">Password</legend> <input class=\"input input-bordered\" type=\"password\" name=\"password\" autocomplete=\"current-password\" required></fieldset><div class=\"card-actions\"><button type=\"submit\" class=\"btn btn-primary\">Enter depot</button></div></form></div></div></div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

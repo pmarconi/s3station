@@ -2,97 +2,88 @@ package views
 
 import "station/internal/models"
 
-templ Settings(user string, items []models.TrashItem) {
+templ SettingsNav(user string) {
+	<header class="navbar sticky top-0 z-30 gap-2 border-b border-base-300 bg-base-100/90 px-4 shadow-sm backdrop-blur sm:px-6">
+		<div class="flex-1 gap-2">
+			<a href="/" class="btn btn-ghost btn-sm">
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+				Back to depot
+			</a>
+			<span class="text-base font-semibold">Settings</span>
+		</div>
+		<div class="flex-none">
+			<div class="grid size-9 place-items-center rounded-full bg-neutral text-sm font-semibold text-neutral-content">
+				{ AvatarInitials(user) }
+			</div>
+		</div>
+	</header>
+}
+
+templ Settings(user string) {
 	@Layout("Settings · Station") {
 		<div
-			data-signals={ InitialSignals("") }
-			data-on:keydown__window="evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
+			data-signals={ InitialSignals(models.Listing{}) }
+			data-on:keydown__window="evt.key === 'Escape' && ($_showPurgeThumbs = false)"
 		>
-			@Topbar(user, "settings")
-			<main class="page settings-stack">
+		<div class="min-h-screen bg-base-200">
+			@SettingsNav(user)
+			<main class="mx-auto grid w-full max-w-6xl gap-4 px-4 pb-10 pt-6">
 				<div>
 					<h1 class="text-xl font-bold">Settings</h1>
-					<p>Listing cache lives in Postgres. Trash lives in the bucket under <code>.station-trash/</code>. Permanent delete is the only action that removes objects from S3.</p>
+					<p class="text-base-content/70">Listing cache lives in Postgres. Folder passwords live in Postgres too. Permanent delete from Trash is the only action that removes objects from S3.</p>
 				</div>
-				<div class="card bg-base-200 shadow-sm">
+				<div class="card bg-base-100 shadow-sm">
+					<div class="card-body">
+						<h2 class="card-title">Folder passwords</h2>
+						<p class="text-base-content/70">A protected folder stays hidden in Station until you unlock it for the current session. This is UI-only: anyone with S3 credentials can still list the same objects in the bucket.</p>
+					</div>
+				</div>
+				<div class="card bg-base-100 shadow-sm">
 					<div class="card-body">
 						<h2 class="card-title">Listing cache</h2>
-						<p>Each folder listing is cached until you open it for the first time or use <strong>Reload folder from the bucket</strong> in that folder’s menu. The button below drops every cached listing.</p>
+						<p class="text-base-content/70">Each folder listing is cached until you open it for the first time or use <strong>Reload folder from the bucket</strong> in that folder’s menu. The button below drops every cached listing.</p>
 						<div class="card-actions">
 							<button class="btn" data-on:click="@post('/cache/purge')">Clear all cached folders</button>
 						</div>
 					</div>
 				</div>
-				<div class="card bg-base-200 shadow-sm">
+				<div class="card bg-base-100 shadow-sm">
+					<div class="card-body">
+						<h2 class="card-title">Thumbnails</h2>
+						<p class="text-base-content/70">Station generates WebP previews under <code>.station-thumbs/</code> in the bucket and caches them in memory. Deleting them does not touch your original files. They will be created again the next time a folder is opened.</p>
+						<div class="card-actions">
+							<button class="btn btn-error" data-on:click="$_showPurgeThumbs = true">Delete generated thumbnails</button>
+						</div>
+					</div>
+				</div>
+				<div class="card bg-base-100 shadow-sm">
 					<div class="card-body">
 						<h2 class="card-title">Trash</h2>
-						<p>Items here are still in your bucket. Restore puts them back. Permanent delete cannot be undone.</p>
-						if len(items) > 0 {
-							<div class="card-actions">
-								<button class="btn btn-error" data-on:click="$_showEmptyTrash = true">Empty trash</button>
-							</div>
-						}
-						@TrashPanel(items)
+						<p class="text-base-content/70">Trashed files stay in the bucket under <code>.station-trash/</code>. Restore or permanently delete them from the Trash screen.</p>
+						<div class="card-actions">
+							<a href="/trash" class="btn">Open trash</a>
+						</div>
 					</div>
 				</div>
 			</main>
 			@SettingsModals()
 		</div>
+		</div>
 	}
 }
 
-templ TrashPanel(items []models.TrashItem) {
-	<div id="trash-panel">
-		if len(items) == 0 {
-			<div class="card bg-base-100 shadow-sm">
-				<div class="card-body">
-					<h3 class="card-title">Trash is empty</h3>
-					<p>Deleted files from the depot will show up here.</p>
-				</div>
-			</div>
-		} else {
-			<ul class="list bg-base-100 rounded-box shadow-sm">
-				for _, item := range items {
-					<li class="list-row">
-						@FileGlyph(item.Kind)
-						<div>
-							<div>{ item.Name }</div>
-							<div>{ TrashMeta(item) }</div>
-						</div>
-						<button class="btn btn-sm" type="button" data-on:click={ RestoreExpr(item) }>Restore</button>
-						<button class="btn btn-sm btn-error" type="button" data-on:click={ PurgeExpr(item) }>Delete forever</button>
-					</li>
-				}
-			</ul>
-		}
-	</div>
-}
-
 templ SettingsModals() {
-	<dialog class="modal" data-attr:open="$_showDelete">
+	<dialog class="modal" data-attr:open="$_showPurgeThumbs">
 		<div class="modal-box">
-			<h3 class="text-lg font-bold">Delete forever</h3>
-			<p>Permanently remove <strong data-text="$targetName"></strong> from the bucket. This cannot be undone.</p>
+			<h3 class="text-lg font-bold">Delete generated thumbnails</h3>
+			<p class="py-2 text-base-content/70">Every object under <code>.station-thumbs/</code> will be removed from the bucket. Original photos and videos stay. Station will rebuild thumbs on demand.</p>
 			<div class="modal-action">
-				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
-				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/trash/purge')">Delete forever</button>
+				<button type="button" class="btn" data-on:click="$_showPurgeThumbs = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showPurgeThumbs = false; @post('/thumbs/purge')">Delete thumbnails</button>
 			</div>
 		</div>
 		<form method="dialog" class="modal-backdrop">
-			<button type="button" data-on:click="$_showDelete = false">close</button>
-		</form>
-	</dialog>
-	<dialog class="modal" data-attr:open="$_showEmptyTrash">
-		<div class="modal-box">
-			<h3 class="text-lg font-bold">Empty trash</h3>
-			<p>Every object under <code>.station-trash/</code> will be deleted from the bucket.</p>
-			<div class="modal-action">
-				<button type="button" class="btn" data-on:click="$_showEmptyTrash = false">Cancel</button>
-				<button type="button" class="btn btn-error" data-on:click="$_showEmptyTrash = false; @post('/trash/empty')">Empty trash</button>
-			</div>
-		</div>
-		<form method="dialog" class="modal-backdrop">
-			<button type="button" data-on:click="$_showEmptyTrash = false">close</button>
+			<button type="button" data-on:click="$_showPurgeThumbs = false">close</button>
 		</form>
 	</dialog>
 	<div class="toast toast-end" data-show="$_flash !== ''" style="display: none">

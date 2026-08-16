@@ -6,8 +6,19 @@ tasks:
     cmds:
       - go tool templ generate
 
+  css:
+    desc: Build Tailwind + DaisyUI CSS once
+    cmds:
+      - npm run css
+
+  css:watch:
+    desc: Watch and rebuild CSS on change
+    cmds:
+      - npm run css:watch
+
   server:
     desc: Generate templates, restart Go, and serve on port 8080
+    deps: [css]
     cmds:
       - go tool air -c .air.toml
 

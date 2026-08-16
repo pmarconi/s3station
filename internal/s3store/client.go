@@ -238,6 +238,19 @@ func (c *Client) Head(ctx context.Context, key string) (models.Entry, error) {
 }
 
 func (c *Client) Get(ctx context.Context, key string) ([]byte, string, error) {
+	body, contentType, err := c.Open(ctx, key)
+	if err != nil {
+		return nil, "", err
+	}
+	defer body.Close()
+	data, err := io.ReadAll(io.LimitReader(body, 32<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	return data, contentType, nil
+}
+
+func (c *Client) Open(ctx context.Context, key string) (io.ReadCloser, string, error) {
 	out, err := c.api.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
@@ -245,12 +258,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	defer out.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(out.Body, 32<<20))
-	if err != nil {
-		return nil, "", err
-	}
-	return data, aws.ToString(out.ContentType), nil
+	return out.Body, aws.ToString(out.ContentType), nil
 }
 
 func (c *Client) Put(ctx context.Context, key string, body []byte, contentType string) error {
@@ -297,6 +305,28 @@ func (c *Client) PresignGet(ctx context.Context, key string) (string, error) {
 		return "", fmt.Errorf("presign get: %w", err)
 	}
 	return out.URL, nil
+}
+
+func (c *Client) PresignDownload(ctx context.Context, key, filename string) (string, error) {
+	out, err := c.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket:                     aws.String(c.bucket),
+		Key:                        aws.String(key),
+		ResponseContentDisposition: aws.String(contentDisposition(filename)),
+	}, s3.WithPresignExpires(c.ttl))
+	if err != nil {
+		return "", fmt.Errorf("presign download: %w", err)
+	}
+	return out.URL, nil
+}
+
+func contentDisposition(filename string) string {
+	filename = strings.ReplaceAll(filename, `"`, `'`)
+	filename = strings.ReplaceAll(filename, "\n", "")
+	filename = strings.ReplaceAll(filename, "\r", "")
+	if filename == "" {
+		filename = "download"
+	}
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, filename, url.PathEscape(filename))
 }
 
 type Object struct {

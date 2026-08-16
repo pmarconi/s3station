@@ -1,24 +1,138 @@
 (function () {
+  const SKIP = { ".DS_Store": true, "Thumbs.db": true, "desktop.ini": true };
+
   function prefix() {
     return document.querySelector("[data-current-prefix]")?.getAttribute("data-current-prefix") || "";
+  }
+
+  function isLocked() {
+    return document.querySelector("[data-locked='true']") != null;
   }
 
   function emit(name, detail) {
     window.dispatchEvent(new CustomEvent(name, { detail: detail || {} }));
   }
 
-  async function uploadFiles(fileList) {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
+  function skipName(name) {
+    return Boolean(SKIP[name]);
+  }
+
+  function readAllEntries(reader) {
+    return new Promise(function (resolve, reject) {
+      const all = [];
+      const next = function () {
+        reader.readEntries(function (batch) {
+          if (!batch.length) {
+            resolve(all);
+            return;
+          }
+          all.push.apply(all, batch);
+          next();
+        }, reject);
+      };
+      next();
+    });
+  }
+
+  function walkEntry(entry, path, out) {
+    if (!entry) return Promise.resolve();
+    if (entry.isFile) {
+      return new Promise(function (resolve, reject) {
+        entry.file(function (file) {
+          if (!skipName(file.name)) {
+            out.push({ file: file, relativePath: path + file.name });
+          }
+          resolve();
+        }, reject);
+      });
+    }
+    if (!entry.isDirectory) return Promise.resolve();
+    const dirPath = path + entry.name + "/";
+    return readAllEntries(entry.createReader()).then(function (children) {
+      if (!children.length) {
+        out.push({ file: null, relativePath: dirPath.replace(/\/$/, ""), isDir: true });
+        return;
+      }
+      return children.reduce(function (prev, child) {
+        return prev.then(function () {
+          return walkEntry(child, dirPath, out);
+        });
+      }, Promise.resolve());
+    });
+  }
+
+  function collectDropped(dataTransfer) {
+    const out = [];
+    const items = dataTransfer && dataTransfer.items;
+    if (items && items.length) {
+      const walks = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+        if (entry) {
+          walks.push(walkEntry(entry, "", out));
+        } else if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file && !skipName(file.name)) {
+            out.push({ file: file, relativePath: file.webkitRelativePath || file.name });
+          }
+        }
+      }
+      return Promise.all(walks).then(function () {
+        return out;
+      });
+    }
+    return Promise.resolve(
+      Array.from((dataTransfer && dataTransfer.files) || [])
+        .filter(function (file) {
+          return !skipName(file.name);
+        })
+        .map(function (file) {
+          return { file: file, relativePath: file.webkitRelativePath || file.name };
+        })
+    );
+  }
+
+  function hasFileItems(dataTransfer) {
+    if (!dataTransfer) return false;
+    if (dataTransfer.items && dataTransfer.items.length) {
+      for (let i = 0; i < dataTransfer.items.length; i++) {
+        if (dataTransfer.items[i].kind === "file") return true;
+      }
+    }
+    return Boolean(dataTransfer.files && dataTransfer.files.length);
+  }
+
+  async function uploadItems(items) {
+    const files = [];
+    const folders = [];
+    (items || []).forEach(function (item) {
+      if (item.isDir && item.relativePath) {
+        folders.push(item.relativePath);
+        return;
+      }
+      if (item.file) files.push(item);
+    });
+    if (!files.length && !folders.length) {
+      emit("station-upload-error", { message: "Nothing to upload from that drop." });
+      return;
+    }
+    if (isLocked()) {
+      emit("station-upload-error", { message: "Unlock this folder first." });
+      return;
+    }
 
     emit("station-upload-start", { message: "Uploading…" });
 
     const keys = [];
+    const dest = prefix();
     try {
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+        const item = files[i];
+        const file = item.file;
+        const name = item.relativePath || file.name;
         emit("station-upload-start", {
-          message: "Uploading " + (i + 1) + "/" + files.length + " · " + file.name,
+          message: "Uploading " + (i + 1) + "/" + files.length + " · " + name,
         });
 
         const presignRes = await fetch("/uploads/presign", {
@@ -26,10 +140,10 @@
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: file.name,
+            name: name,
             contentType: file.type || "application/octet-stream",
             size: file.size,
-            prefix: prefix(),
+            prefix: dest,
           }),
         });
         if (!presignRes.ok) {
@@ -43,7 +157,7 @@
           body: file,
         });
         if (!putRes.ok) {
-          throw new Error("S3 rejected " + file.name + " (" + putRes.status + ")");
+          throw new Error("S3 rejected " + name + " (" + putRes.status + ")");
         }
         keys.push(spec.key);
       }
@@ -52,14 +166,17 @@
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys, prefix: prefix() }),
+        body: JSON.stringify({ keys: keys, prefix: dest, folders: folders }),
       });
       if (!done.ok) {
         throw new Error("Upload finished but the listing cache could not be updated");
       }
 
+      const n = files.length;
       emit("station-uploaded", {
-        message: "Uploaded " + files.length + " file" + (files.length === 1 ? "" : "s"),
+        message: n
+          ? "Uploaded " + n + " file" + (n === 1 ? "" : "s")
+          : "Folder created.",
       });
     } catch (err) {
       console.error(err);
@@ -75,7 +192,10 @@
         picker.click();
       });
       picker.addEventListener("change", function () {
-        uploadFiles(picker.files);
+        const items = Array.from(picker.files || []).map(function (file) {
+          return { file: file, relativePath: file.webkitRelativePath || file.name };
+        });
+        uploadItems(items);
         picker.value = "";
       });
     }
@@ -85,6 +205,11 @@
 
     function isInternalMove() {
       return Boolean(movingKey);
+    }
+
+    function cannotMoveInto(src, dest) {
+      if (!src || dest == null) return true;
+      return dest === src || dest.indexOf(src) === 0;
     }
 
     document.addEventListener("dragstart", function (event) {
@@ -110,6 +235,8 @@
         el.classList.remove("border-primary");
       });
       if (!folder) return;
+      const dest = folder.getAttribute("data-station-folder") || "";
+      if (cannotMoveInto(movingKey, dest)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
       folder.classList.add("border-primary");
@@ -122,8 +249,13 @@
         el.classList.remove("border-primary");
       });
       if (!folder || !key) return;
+      const dest = folder.getAttribute("data-station-folder") || "";
       event.preventDefault();
       event.stopPropagation();
+      if (cannotMoveInto(key, dest)) {
+        emit("station-upload-error", { message: "Can't move a folder into itself." });
+        return;
+      }
       emit("station-upload-start", { message: "Moving…" });
       try {
         const res = await fetch("/files/move", {
@@ -132,7 +264,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             key: key,
-            destPrefix: folder.getAttribute("data-station-folder") || "",
+            destPrefix: dest,
           }),
         });
         if (!res.ok) {
@@ -157,9 +289,14 @@
     });
     window.addEventListener("drop", function (event) {
       dropOverlay?.setAttribute("hidden", "");
-      if (isInternalMove() || !event.dataTransfer?.files?.length) return;
+      if (isInternalMove() || !hasFileItems(event.dataTransfer)) return;
       event.preventDefault();
-      uploadFiles(event.dataTransfer.files);
+      collectDropped(event.dataTransfer)
+        .then(uploadItems)
+        .catch(function (err) {
+          console.error(err);
+          emit("station-upload-error", { message: err.message || "Could not read the dropped folder." });
+        });
     });
   }
 

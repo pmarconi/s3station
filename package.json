@@ -1,0 +1,14 @@
+{
+  "name": "station",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "css": "tailwindcss -i ./internal/web/assets/css/input.css -o ./internal/web/assets/css/app.build.css --minify",
+    "css:watch": "tailwindcss -i ./internal/web/assets/css/input.css -o ./internal/web/assets/css/app.build.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "daisyui": "^5.0.0",
+    "tailwindcss": "^4.1.0"
+  }
+}

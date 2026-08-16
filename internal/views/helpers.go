@@ -3,6 +3,7 @@ package views
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"station/internal/filesvc"
@@ -17,13 +18,15 @@ func jsString(s string) string {
 	return string(b)
 }
 
-func InitialSignals(prefix string) string {
+func InitialSignals(listing models.Listing) string {
 	b, err := json.Marshal(map[string]any{
-		"prefix":           prefix,
+		"prefix":           listing.Prefix,
 		"newFolderName":    "",
 		"targetKey":        "",
 		"targetName":       "",
 		"targetBatch":      "",
+		"folderPassword":   "",
+		"renameTo":         "",
 		"view":             "grid",
 		"query":            "",
 		"refresh":          false,
@@ -31,9 +34,16 @@ func InitialSignals(prefix string) string {
 		"_flash":           "",
 		"_flashKind":       "ok",
 		"_showNewFolder":   false,
+		"_showRename":      false,
 		"_showDelete":      false,
 		"_showPreview":     false,
 		"_showEmptyTrash":  false,
+		"_showPurgeThumbs": false,
+		"_showUnlock":      false,
+		"_showProtect":     false,
+		"_showUnprotect":   false,
+		"_locked":          listing.Locked,
+		"_protected":       listing.Protected,
 		"_previewURL":      "",
 		"_previewKind":     "",
 		"_previewName":     "",
@@ -44,8 +54,40 @@ func InitialSignals(prefix string) string {
 	return string(b)
 }
 
+func AvatarInitials(user string) string {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return "?"
+	}
+	parts := strings.FieldsFunc(user, func(r rune) bool {
+		return r == ' ' || r == '.' || r == '_' || r == '-' || r == '@'
+	})
+	if len(parts) == 0 {
+		return strings.ToUpper(string([]rune(user)[0]))
+	}
+	if len(parts) == 1 {
+		r := []rune(strings.ToUpper(parts[0]))
+		if len(r) > 1 {
+			return string(r[:2])
+		}
+		return string(r)
+	}
+	return strings.ToUpper(string([]rune(parts[0])[0]) + string([]rune(parts[1])[0]))
+}
+
 func NavigateExpr(prefix string) string {
-	return fmt.Sprintf("$prefix = %s; $refresh = false; @get('/files')", jsString(prefix))
+	return fmt.Sprintf("$_busy = true; $prefix = %s; $refresh = false; @get('/files')", jsString(prefix))
+}
+
+func UnlockExpr(e models.Entry) string {
+	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $folderPassword = ''; $_showUnlock = true", jsString(e.Key), jsString(e.Name))
+}
+
+func FolderClickExpr(e models.Entry) string {
+	if e.Locked {
+		return UnlockExpr(e)
+	}
+	return NavigateExpr(e.Key)
 }
 
 func FilterExpr(name string) string {
@@ -66,6 +108,14 @@ func PreviewExpr(e models.Entry) string {
 		url = e.DownloadURL
 	}
 	return fmt.Sprintf("$_previewURL = %s; $_previewKind = %s; $_previewName = %s; $_showPreview = true", jsString(url), jsString(kind), jsString(e.Name))
+}
+
+func ArchiveHref(prefix string) string {
+	return "/folders/archive?prefix=" + url.QueryEscape(prefix)
+}
+
+func RenameExpr(e models.Entry) string {
+	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $renameTo = %s; $_showRename = true", jsString(e.Key), jsString(e.Name), jsString(e.Name))
 }
 
 func TrashExpr(e models.Entry) string {
@@ -92,6 +142,12 @@ func CacheLabel(listing models.Listing) string {
 
 func ItemMeta(e models.Entry) string {
 	if e.IsDir {
+		if e.Locked {
+			return "Locked folder"
+		}
+		if e.Protected {
+			return "Protected folder"
+		}
 		return "Folder"
 	}
 	parts := []string{filesvc.FormatBytes(e.Size)}
@@ -115,6 +171,19 @@ func TotalSize(entries []models.Entry) int64 {
 		n += e.Size
 	}
 	return n
+}
+
+func TrashAsEntry(item models.TrashItem) models.Entry {
+	return models.Entry{
+		Name:         item.Name,
+		IsDir:        item.IsDir,
+		Kind:         item.Kind,
+		Size:         item.Size,
+		LastModified: item.TrashedAt,
+		PreviewURL:   item.PreviewURL,
+		ThumbURL:     item.ThumbURL,
+		ThumbURLs:    item.ThumbURLs,
+	}
 }
 
 func TrashMeta(item models.TrashItem) string {

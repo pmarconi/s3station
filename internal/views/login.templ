@@ -2,23 +2,24 @@ package views
 
 templ Login(errMsg string) {
 	@Layout("Sign in · Station") {
-		<div class="hero min-h-screen">
+		<div class="hero bg-base-200 min-h-screen">
 			<div class="hero-content">
 				<div class="card bg-base-100 shadow-sm">
 					<div class="card-body">
+						<p class="badge badge-primary">Private depot</p>
 						<h1 class="card-title">Station</h1>
-						<p>Sign in to browse the bucket. Files upload straight to S3 — this server never keeps a copy.</p>
+						<p class="text-base-content/70">Sign in to browse the bucket. Files upload straight to S3 — this server never keeps a copy.</p>
 						if errMsg != "" {
 							<div class="alert alert-error" role="alert">{ errMsg }</div>
 						}
 						<form method="post" action="/login">
 							<fieldset class="fieldset">
 								<legend class="fieldset-legend">Username</legend>
-								<input class="input" type="text" name="username" autocomplete="username" required autofocus/>
+								<input class="input input-bordered" type="text" name="username" autocomplete="username" required autofocus/>
 							</fieldset>
 							<fieldset class="fieldset">
 								<legend class="fieldset-legend">Password</legend>
-								<input class="input" type="password" name="password" autocomplete="current-password" required/>
+								<input class="input input-bordered" type="password" name="password" autocomplete="current-password" required/>
 							</fieldset>
 							<div class="card-actions">
 								<button type="submit" class="btn btn-primary">Enter depot</button>

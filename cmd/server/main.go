@@ -15,6 +15,7 @@ import (
 	"station/internal/config"
 	"station/internal/db"
 	"station/internal/filesvc"
+	"station/internal/locks"
 	"station/internal/s3store"
 	"station/internal/session"
 	"station/internal/web"
@@ -52,7 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := web.New(cfg, sessions, filesvc.New(s3c, cache.New(pool), cfg), log)
+	h := web.New(cfg, sessions, filesvc.New(s3c, cache.New(pool), locks.New(pool), cfg), log)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           h,

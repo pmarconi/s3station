@@ -15,6 +15,7 @@ import (
 
 	"station/internal/config"
 	"station/internal/filesvc"
+	"station/internal/locks"
 	"station/internal/models"
 	"station/internal/session"
 	"station/internal/storage"
@@ -22,11 +23,13 @@ import (
 )
 
 type Signals struct {
-	Prefix        string `json:"prefix"`
-	NewFolderName string `json:"newFolderName"`
-	TargetKey     string `json:"targetKey"`
-	TargetBatch   string `json:"targetBatch"`
-	Refresh       bool   `json:"refresh"`
+	Prefix         string `json:"prefix"`
+	NewFolderName  string `json:"newFolderName"`
+	TargetKey      string `json:"targetKey"`
+	TargetBatch    string `json:"targetBatch"`
+	FolderPassword string `json:"folderPassword"`
+	RenameTo       string `json:"renameTo"`
+	Refresh        bool   `json:"refresh"`
 }
 
 type Server struct {
@@ -58,17 +61,25 @@ func New(cfg config.Config, sessions *session.Store, files *filesvc.Service, log
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAuth)
 		r.Get("/", s.browser)
+		r.Get("/trash", s.trashPage)
 		r.Get("/settings", s.settings)
 		r.Get("/files", s.listFiles)
 		r.Post("/folders", s.createFolder)
+		r.Post("/folders/protect", s.protectFolder)
+		r.Post("/folders/unprotect", s.unprotectFolder)
+		r.Post("/folders/unlock", s.unlockFolder)
+		r.Get("/folders/archive", s.folderArchive)
 		r.Post("/files/trash", s.trash)
 		r.Post("/files/move", s.move)
+		r.Post("/files/rename", s.rename)
 		r.Post("/cache/purge", s.purgeCache)
+		r.Post("/thumbs/purge", s.purgeThumbs)
 		r.Post("/trash/restore", s.restore)
 		r.Post("/trash/purge", s.purgeTrash)
 		r.Post("/trash/empty", s.emptyTrash)
 		r.Post("/uploads/presign", s.presign)
 		r.Post("/uploads/complete", s.complete)
+		r.Get("/thumbs/*", s.thumb)
 	})
 	return r
 }
@@ -82,7 +93,8 @@ func currentUser(r *http.Request) string {
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok, err := s.sessions.Username(r.Context(), session.TokenFromRequest(r))
+		token := session.TokenFromRequest(r)
+		user, ok, err := s.sessions.Username(r.Context(), token)
 		if err != nil {
 			http.Error(w, "session error", http.StatusInternalServerError)
 			return
@@ -96,7 +108,9 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		ctx := context.WithValue(r.Context(), userKey{}, user)
+		ctx = locks.WithUnlocked(ctx, s.sessions.UnlockedFolders(ctx, token))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -175,12 +189,20 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 	_ = sse.MarshalAndPatchSignals(map[string]any{
 		"prefix":         listing.Prefix,
 		"refresh":        false,
-		"newFolderName":  "",
-		"_showNewFolder": false,
-		"_showDelete":    false,
-		"_busy":          false,
-		"_flash":         msg,
-		"_flashKind":     "ok",
+		"newFolderName":    "",
+		"folderPassword":   "",
+		"renameTo":         "",
+		"_showNewFolder":   false,
+		"_showRename":      false,
+		"_showDelete":      false,
+		"_showUnlock":      false,
+		"_showProtect":     false,
+		"_showUnprotect":   false,
+		"_locked":          listing.Locked,
+		"_protected":       listing.Protected,
+		"_busy":            false,
+		"_flash":           msg,
+		"_flashKind":       "ok",
 	})
 	u := *r.URL
 	u.Path = "/"
@@ -200,7 +222,8 @@ func (s *Server) patchTrash(w http.ResponseWriter, r *http.Request, items []mode
 	_ = sse.MarshalAndPatchSignals(map[string]any{
 		"targetBatch":     "",
 		"_showDelete":     false,
-		"_showEmptyTrash": false,
+		"_showEmptyTrash":  false,
+		"_showPurgeThumbs": false,
 		"_flash":          msg,
 		"_flashKind":      "ok",
 	})
@@ -212,6 +235,20 @@ func publicError(err error) string {
 		return "That path is not allowed."
 	case errors.Is(err, storage.ErrReserved):
 		return "That name is reserved for trash."
+	case errors.Is(err, filesvc.ErrExists):
+		return "That name is already used here."
+	case errors.Is(err, locks.ErrLocked):
+		return "Unlock this folder first."
+	case errors.Is(err, locks.ErrWrongPassword):
+		return "Wrong folder password."
+	case errors.Is(err, locks.ErrAlreadyProtected):
+		return "This folder is already protected."
+	case errors.Is(err, locks.ErrNotProtected):
+		return "This folder is not protected."
+	case errors.Is(err, locks.ErrRoot):
+		return "The depot root cannot be password protected."
+	case errors.Is(err, locks.ErrPasswordShort):
+		return "Folder password must be at least 4 characters."
 	default:
 		return "Something went wrong."
 	}

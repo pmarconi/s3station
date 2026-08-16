@@ -1,0 +1,125 @@
+package views
+
+import "station/internal/models"
+
+templ Trash(user string, items []models.TrashItem) {
+	@Layout("Trash · Station") {
+		<div
+			class="drawer lg:drawer-open"
+			data-signals={ InitialSignals(models.Listing{}) }
+			data-on:keydown__window="evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
+		>
+			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
+			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
+				@Topbar(user, "Trash")
+				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
+					@TrashPanel(items)
+				</main>
+			</div>
+			<div class="drawer-side">
+				<label for="station-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+				@Sidebar(user, "trash")
+			</div>
+			@TrashModals()
+			@GalleryModal()
+		</div>
+	}
+}
+
+templ TrashPanel(items []models.TrashItem) {
+	<div id="trash-panel">
+		<section class="mb-5 flex flex-wrap items-end justify-between gap-3">
+			<div>
+				<h1 class="text-xl font-bold">Trash</h1>
+				<p class="text-sm text-base-content/60">Items stay in the bucket under <code>.station-trash/</code> until you delete them forever.</p>
+			</div>
+			if len(items) > 0 {
+				<button type="button" class="btn btn-error btn-sm" data-on:click="$_showEmptyTrash = true">Empty trash</button>
+			}
+		</section>
+		if len(items) == 0 {
+			<div class="hero rounded-box border border-dashed border-base-300 bg-base-100 py-16">
+				<div class="hero-content text-center">
+					<div>
+						<div class="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-base-300 text-primary">
+							<svg xmlns="http://www.w3.org/2000/svg" class="size-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3m-9 0h10"/></svg>
+						</div>
+						<h2 class="text-lg font-bold">Trash is empty</h2>
+						<p class="mt-1 text-base-content/60">Deleted files from the depot will show up here.</p>
+					</div>
+				</div>
+			</div>
+		} else {
+			<section class="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+				for _, item := range items {
+					@TrashCard(item)
+				}
+			</section>
+		}
+	</div>
+}
+
+templ TrashCard(item models.TrashItem) {
+	<article
+		class="file-tile group"
+		if item.Kind == models.KindImage && item.PreviewURL != "" {
+			data-gallery-src={ item.PreviewURL }
+			data-gallery-name={ item.Name }
+		}
+	>
+		<div class="file-tile-preview relative aspect-square w-full">
+			<div class="h-full w-full overflow-hidden rounded-xl bg-base-100">
+				@TilePreview(TrashAsEntry(item))
+			</div>
+			<div class="absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100" data-on:click="evt.stopPropagation()">
+				<div class="dropdown dropdown-end">
+					<div tabindex="0" role="button" class="btn btn-circle btn-sm btn-neutral" aria-label="Item options">
+						<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"/></svg>
+					</div>
+					<ul tabindex="0" class="dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg">
+						<li><button type="button" data-on:click={ RestoreExpr(item) }>Restore</button></li>
+						<li><button type="button" class="text-error" data-on:click={ PurgeExpr(item) }>Delete forever</button></li>
+					</ul>
+				</div>
+			</div>
+		</div>
+		<div class="file-tile-meta mt-2 min-w-0">
+			<p class="truncate text-sm font-medium" title={ item.Name }>{ item.Name }</p>
+			<p class="truncate text-xs text-base-content/50">{ TrashMeta(item) }</p>
+		</div>
+	</article>
+}
+
+templ TrashModals() {
+	<dialog class="modal" data-attr:open="$_showDelete">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Delete forever</h3>
+			<p>Permanently remove <strong data-text="$targetName"></strong> from the bucket. This cannot be undone.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/trash/purge')">Delete forever</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showDelete = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showEmptyTrash">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Empty trash</h3>
+			<p>Every object under <code>.station-trash/</code> will be deleted from the bucket.</p>
+			<div class="modal-action">
+				<button type="button" class="btn" data-on:click="$_showEmptyTrash = false">Cancel</button>
+				<button type="button" class="btn btn-error" data-on:click="$_showEmptyTrash = false; @post('/trash/empty')">Empty trash</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showEmptyTrash = false">close</button>
+		</form>
+	</dialog>
+	<div class="toast toast-end z-50" data-show="$_flash !== ''" style="display: none">
+		<div class="alert" data-class:alert-success="$_flashKind === 'ok'" data-class:alert-error="$_flashKind === 'bad'" data-on:click="$_flash = ''">
+			<span data-text="$_flash"></span>
+		</div>
+	</div>
+}

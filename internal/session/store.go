@@ -13,10 +13,12 @@ import (
 )
 
 const (
-	cookieName = "station_session"
-	keyPrefix  = "session:"
-	loginKey   = "login:"
-	ttl        = 7 * 24 * time.Hour
+	cookieName     = "station_session"
+	keyPrefix      = "session:"
+	unlockedPrefix = "session-unlock:"
+	loginKey       = "login:"
+	unlockKey      = "unlock:"
+	ttl            = 7 * 24 * time.Hour
 )
 
 type Store struct {
@@ -78,7 +80,42 @@ func (s *Store) Delete(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
-	return s.rdb.Del(ctx, keyPrefix+token).Err()
+	return s.rdb.Del(ctx, keyPrefix+token, unlockedPrefix+token).Err()
+}
+
+func (s *Store) UnlockFolder(ctx context.Context, token, prefix string) error {
+	if token == "" || prefix == "" {
+		return nil
+	}
+	key := unlockedPrefix + token
+	pipe := s.rdb.TxPipeline()
+	pipe.SAdd(ctx, key, prefix)
+	pipe.Expire(ctx, key, ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (s *Store) UnlockedFolders(ctx context.Context, token string) []string {
+	if token == "" {
+		return nil
+	}
+	vals, err := s.rdb.SMembers(ctx, unlockedPrefix+token).Result()
+	if err != nil {
+		return nil
+	}
+	return vals
+}
+
+func (s *Store) AllowUnlock(ctx context.Context, ip string) (bool, error) {
+	key := unlockKey + ip
+	n, err := s.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	if n == 1 {
+		_ = s.rdb.Expire(ctx, key, 15*time.Minute).Err()
+	}
+	return n <= 20, nil
 }
 
 func (s *Store) AllowLogin(ctx context.Context, ip string) (bool, error) {

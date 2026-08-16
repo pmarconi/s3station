@@ -2,6 +2,8 @@ package filesvc
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,20 +12,30 @@ import (
 
 	"station/internal/cache"
 	"station/internal/config"
+	"station/internal/locks"
 	"station/internal/models"
 	"station/internal/s3store"
 	"station/internal/storage"
 	"station/internal/thumbs"
 )
 
+var ErrExists = errors.New("that name is already used")
+
 type Service struct {
-	s3      *s3store.Client
-	cache   *cache.Store
-	maxSize int64
+	s3         *s3store.Client
+	cache      *cache.Store
+	locks      *locks.Store
+	thumbCache *thumbs.Mem
+	maxSize    int64
+	root       string
 }
 
-func New(s3c *s3store.Client, c *cache.Store, cfg config.Config) *Service {
-	return &Service{s3: s3c, cache: c, maxSize: cfg.MaxUploadBytes}
+func New(s3c *s3store.Client, c *cache.Store, lockStore *locks.Store, cfg config.Config) *Service {
+	root := cfg.FilesPrefix
+	if root == "" {
+		root = storage.FilesPrefix
+	}
+	return &Service{s3: s3c, cache: c, locks: lockStore, thumbCache: thumbs.NewMem(32 << 20), maxSize: cfg.MaxUploadBytes, root: root}
 }
 
 func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models.Listing, error) {
@@ -35,6 +47,19 @@ func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models
 		return models.Listing{}, err
 	}
 
+	protected, err := s.locks.IsProtected(ctx, prefix)
+	if err != nil {
+		return models.Listing{}, err
+	}
+	if covering, locked := s.lockedBy(ctx, prefix); locked {
+		return models.Listing{
+			Prefix:       prefix,
+			Locked:       true,
+			LockedPrefix: covering,
+			Protected:    protected,
+		}, nil
+	}
+
 	if refresh {
 		if err := s.cache.DeletePrefix(ctx, prefix); err != nil {
 			return models.Listing{}, fmt.Errorf("clear cache: %w", err)
@@ -43,20 +68,30 @@ func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models
 		return models.Listing{}, err
 	} else if ok {
 		listing.Entries = visibleEntries(listing.Entries)
+		if err := s.markLocks(ctx, listing.Entries); err != nil {
+			return models.Listing{}, err
+		}
 		if err := s.attachURLs(ctx, listing.Entries); err != nil {
 			return models.Listing{}, err
 		}
+		listing.Protected = protected
 		return listing, nil
 	}
 
-	entries, err := s.s3.List(ctx, prefix)
+	entries, err := s.s3.List(ctx, s.abs(prefix))
 	if err != nil {
 		return models.Listing{}, err
+	}
+	for i := range entries {
+		entries[i].Key = s.rel(entries[i].Key)
 	}
 	entries = visibleEntries(entries)
 	sortEntries(entries)
 	if err := s.cache.Put(ctx, prefix, entries); err != nil {
 		return models.Listing{}, fmt.Errorf("write cache: %w", err)
+	}
+	if err := s.markLocks(ctx, entries); err != nil {
+		return models.Listing{}, err
 	}
 	if err := s.attachURLs(ctx, entries); err != nil {
 		return models.Listing{}, err
@@ -67,6 +102,7 @@ func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models
 	}
 	listing.FromCache = false
 	listing.Entries = entries
+	listing.Protected = protected
 	return listing, nil
 }
 
@@ -78,6 +114,9 @@ func (s *Service) CreateFolder(ctx context.Context, prefix, name string) error {
 	if err := storage.GuardUserKey(prefix); err != nil && prefix != "" {
 		return err
 	}
+	if err := s.denyIfLocked(ctx, prefix); err != nil {
+		return err
+	}
 	name, err = storage.SanitizeName(name)
 	if err != nil {
 		return err
@@ -86,7 +125,7 @@ func (s *Service) CreateFolder(ctx context.Context, prefix, name string) error {
 		return storage.ErrReserved
 	}
 	key := storage.JoinKey(prefix, name) + "/"
-	if err := s.s3.PutFolder(ctx, key); err != nil {
+	if err := s.s3.PutFolder(ctx, s.abs(key)); err != nil {
 		return err
 	}
 	return s.cache.UpsertObject(ctx, prefix, models.Entry{
@@ -112,6 +151,12 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 	if err := storage.GuardUserKey(destPrefix); err != nil && destPrefix != "" {
 		return err
 	}
+	if err := s.denyIfLocked(ctx, src); err != nil {
+		return err
+	}
+	if err := s.denyIfLocked(ctx, destPrefix); err != nil {
+		return err
+	}
 	if storage.ParentPrefix(src) == destPrefix {
 		return nil
 	}
@@ -122,7 +167,9 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 		}
 		name := storage.BaseName(src)
 		newPrefix := destPrefix + name + "/"
-		objs, err := s.s3.ListAll(ctx, src)
+		srcAbs := s.abs(src)
+		destAbs := s.abs(newPrefix)
+		objs, err := s.s3.ListAll(ctx, srcAbs)
 		if err != nil {
 			return err
 		}
@@ -130,12 +177,12 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 		for _, obj := range objs {
 			oldKeys = append(oldKeys, obj.Key)
 		}
-		exists, err := s.s3.Exists(ctx, src)
+		exists, err := s.s3.Exists(ctx, srcAbs)
 		if err != nil {
 			return err
 		}
 		if exists {
-			oldKeys = append(oldKeys, src)
+			oldKeys = append(oldKeys, srcAbs)
 		}
 		seen := map[string]struct{}{}
 		for _, old := range oldKeys {
@@ -143,18 +190,20 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 				continue
 			}
 			seen[old] = struct{}{}
-			rel := strings.TrimPrefix(old, src)
-			dest := newPrefix + rel
+			rel := strings.TrimPrefix(old, srcAbs)
+			dest := destAbs + rel
 			if err := s.s3.Copy(ctx, old, dest); err != nil {
 				return err
 			}
 			if !storage.IsFolderKey(old) {
 				thumbs.Relocate(ctx, s.s3, old, dest)
+				s.thumbCache.Delete(storage.AllThumbKeys(old)...)
 			}
 		}
 		if err := s.s3.DeleteKeys(ctx, oldKeys); err != nil {
 			return err
 		}
+		_ = s.locks.Relocate(ctx, src, newPrefix)
 		_ = s.cache.DeletePrefix(ctx, src)
 		_ = s.cache.DeletePrefix(ctx, destPrefix)
 		return s.cache.RemoveObject(ctx, storage.ParentPrefix(src), src)
@@ -165,20 +214,125 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.s3.Copy(ctx, src, dest); err != nil {
+	if err := s.s3.Copy(ctx, s.abs(src), s.abs(dest)); err != nil {
 		return err
 	}
-	if err := s.s3.DeleteKeys(ctx, []string{src}); err != nil {
+	if err := s.s3.DeleteKeys(ctx, []string{s.abs(src)}); err != nil {
 		return err
 	}
-	thumbs.Relocate(ctx, s.s3, src, dest)
+	thumbs.Relocate(ctx, s.s3, s.abs(src), s.abs(dest))
+	s.thumbCache.Delete(storage.AllThumbKeys(s.abs(src))...)
 	_ = s.cache.RemoveObject(ctx, storage.ParentPrefix(src), src)
 	_ = s.cache.DeletePrefix(ctx, destPrefix)
 	return nil
 }
 
+func (s *Service) Rename(ctx context.Context, key, newName string) error {
+	src, err := storage.NormalizeObjectKey(key)
+	if err != nil {
+		return err
+	}
+	if err := storage.GuardUserKey(src); err != nil {
+		return err
+	}
+	newName, err = storage.SanitizeName(newName)
+	if err != nil {
+		return err
+	}
+	if storage.IsReservedName(newName) {
+		return storage.ErrReserved
+	}
+	if err := s.denyIfLocked(ctx, src); err != nil {
+		return err
+	}
+	dest := storage.ParentPrefix(src) + newName
+	if storage.IsFolderKey(src) {
+		dest += "/"
+	}
+	if dest == src {
+		return nil
+	}
+	taken, err := s.destTaken(ctx, dest)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrExists
+	}
+	return s.relocate(ctx, src, dest)
+}
+
+func (s *Service) destTaken(ctx context.Context, dest string) (bool, error) {
+	exists, err := s.s3.Exists(ctx, s.abs(dest))
+	if err != nil || exists {
+		return exists, err
+	}
+	if storage.IsFolderKey(dest) {
+		objs, err := s.s3.ListAll(ctx, s.abs(dest))
+		return len(objs) > 0, err
+	}
+	return false, nil
+}
+
+func (s *Service) relocate(ctx context.Context, src, dest string) error {
+	parent := storage.ParentPrefix(src)
+	if storage.IsFolderKey(src) {
+		srcAbs := s.abs(src)
+		destAbs := s.abs(dest)
+		objs, err := s.s3.ListAll(ctx, srcAbs)
+		if err != nil {
+			return err
+		}
+		oldKeys := make([]string, 0, len(objs)+1)
+		for _, obj := range objs {
+			oldKeys = append(oldKeys, obj.Key)
+		}
+		exists, err := s.s3.Exists(ctx, srcAbs)
+		if err != nil {
+			return err
+		}
+		if exists {
+			oldKeys = append(oldKeys, srcAbs)
+		}
+		seen := map[string]struct{}{}
+		for _, old := range oldKeys {
+			if _, ok := seen[old]; ok {
+				continue
+			}
+			seen[old] = struct{}{}
+			rel := strings.TrimPrefix(old, srcAbs)
+			if err := s.s3.Copy(ctx, old, destAbs+rel); err != nil {
+				return err
+			}
+			if !storage.IsFolderKey(old) {
+				thumbs.Relocate(ctx, s.s3, old, destAbs+rel)
+				s.thumbCache.Delete(storage.AllThumbKeys(old)...)
+			}
+		}
+		if err := s.s3.DeleteKeys(ctx, oldKeys); err != nil {
+			return err
+		}
+		_ = s.locks.Relocate(ctx, src, dest)
+		_ = s.cache.DeletePrefix(ctx, src)
+		_ = s.cache.DeletePrefix(ctx, parent)
+		return s.cache.RemoveObject(ctx, parent, src)
+	}
+
+	if err := s.s3.Copy(ctx, s.abs(src), s.abs(dest)); err != nil {
+		return err
+	}
+	if err := s.s3.DeleteKeys(ctx, []string{s.abs(src)}); err != nil {
+		return err
+	}
+	thumbs.Relocate(ctx, s.s3, s.abs(src), s.abs(dest))
+	s.thumbCache.Delete(storage.AllThumbKeys(s.abs(src))...)
+	_ = s.cache.RemoveObject(ctx, parent, src)
+	_ = s.cache.DeletePrefix(ctx, parent)
+	return nil
+}
+
 func (s *Service) uniqueKey(ctx context.Context, key string) (string, error) {
-	exists, err := s.s3.Exists(ctx, key)
+	exists, err := s.s3.Exists(ctx, s.abs(key))
 	if err != nil {
 		return "", err
 	}
@@ -189,7 +343,7 @@ func (s *Service) uniqueKey(ctx context.Context, key string) (string, error) {
 	base := strings.TrimSuffix(key, ext)
 	for i := 2; i < 100; i++ {
 		candidate := fmt.Sprintf("%s (%d)%s", base, i, ext)
-		taken, err := s.s3.Exists(ctx, candidate)
+		taken, err := s.s3.Exists(ctx, s.abs(candidate))
 		if err != nil {
 			return "", err
 		}
@@ -208,28 +362,31 @@ func (s *Service) Trash(ctx context.Context, key string) error {
 	if err := storage.GuardUserKey(key); err != nil {
 		return err
 	}
+	if err := s.denyIfLocked(ctx, key); err != nil {
+		return err
+	}
 
 	var originals []string
 	if storage.IsFolderKey(key) {
-		objs, err := s.s3.ListAll(ctx, key)
+		objs, err := s.s3.ListAll(ctx, s.abs(key))
 		if err != nil {
 			return err
 		}
 		for _, obj := range objs {
 			originals = append(originals, obj.Key)
 		}
-		exists, err := s.s3.Exists(ctx, key)
+		exists, err := s.s3.Exists(ctx, s.abs(key))
 		if err != nil {
 			return err
 		}
 		if exists {
-			originals = append(originals, key)
+			originals = append(originals, s.abs(key))
 		}
 		if len(originals) == 0 {
 			return s.cache.RemoveObject(ctx, storage.ParentPrefix(key), key)
 		}
 	} else {
-		originals = []string{key}
+		originals = []string{s.abs(key)}
 	}
 
 	seen := map[string]struct{}{}
@@ -239,7 +396,7 @@ func (s *Service) Trash(ctx context.Context, key string) error {
 			continue
 		}
 		seen[src] = struct{}{}
-		dest := batchPrefix + src
+		dest := batchPrefix + s.rel(src)
 		if err := s.s3.Copy(ctx, src, dest); err != nil {
 			return err
 		}
@@ -248,6 +405,9 @@ func (s *Service) Trash(ctx context.Context, key string) error {
 		return err
 	}
 	thumbs.Remove(ctx, s.s3, originals)
+	for _, key := range originals {
+		s.thumbCache.Delete(storage.AllThumbKeys(key)...)
+	}
 
 	if storage.IsFolderKey(key) {
 		if err := s.cache.DeletePrefix(ctx, key); err != nil {
@@ -300,7 +460,7 @@ func (s *Service) ListTrash(ctx context.Context) ([]models.TrashItem, error) {
 	items := make([]models.TrashItem, 0, len(order))
 	for _, batch := range order {
 		g := groups[batch]
-		root := commonOriginalRoot(g.item.TrashKeys)
+		root := s.rel(commonOriginalRoot(g.item.TrashKeys))
 		g.item.OriginalKey = root
 		g.item.Name = storage.BaseName(root)
 		g.item.IsDir = g.item.Count > 1 || storage.IsFolderKey(root)
@@ -308,11 +468,19 @@ func (s *Service) ListTrash(ctx context.Context) ([]models.TrashItem, error) {
 			g.item.Kind = models.KindFolder
 		} else {
 			g.item.Kind = storage.KindFromName(g.item.Name, false)
-			if url, err := s.s3.PresignGet(ctx, g.item.TrashKeys[0]); err == nil {
+			src := g.item.TrashKeys[0]
+			if url, err := s.s3.PresignGet(ctx, src); err == nil {
 				switch g.item.Kind {
 				case models.KindImage, models.KindAudio, models.KindVideo, models.KindPDF:
 					g.item.PreviewURL = url
 				}
+			}
+			if g.item.Kind == models.KindImage || g.item.Kind == models.KindVideo {
+				if urls := thumbs.LocalURLs(src, g.item.Kind); len(urls) > 0 {
+					g.item.ThumbURLs = urls
+					g.item.ThumbURL = urls[0]
+				}
+				thumbs.EnsureLater(s.s3, src, g.item.Kind)
 			}
 		}
 		if g.item.Name == "" {
@@ -338,18 +506,18 @@ func (s *Service) Restore(ctx context.Context, batchID string) error {
 		if !ok {
 			continue
 		}
-		dest := original
+		dest := s.abs(original)
 		exists, err := s.s3.Exists(ctx, dest)
 		if err != nil {
 			return err
 		}
 		if exists {
-			dest = restoredName(dest)
+			dest = s.abs(restoredName(original))
 		}
 		if err := s.s3.Copy(ctx, trashKey, dest); err != nil {
 			return err
 		}
-		parents[storage.ParentPrefix(dest)] = struct{}{}
+		parents[storage.ParentPrefix(original)] = struct{}{}
 	}
 	if err := s.s3.DeleteKeys(ctx, item.TrashKeys); err != nil {
 		return err
@@ -383,6 +551,26 @@ func (s *Service) EmptyTrash(ctx context.Context) error {
 	return s.s3.DeleteKeys(ctx, keys)
 }
 
+func (s *Service) PurgeThumbs(ctx context.Context) (int, error) {
+	objs, err := s.s3.ListAll(ctx, storage.ThumbPrefix)
+	if err != nil {
+		return 0, err
+	}
+	keys := make([]string, 0, len(objs))
+	for _, obj := range objs {
+		if storage.IsThumbKey(obj.Key) {
+			keys = append(keys, obj.Key)
+		}
+	}
+	if len(keys) > 0 {
+		if err := s.s3.DeleteKeys(ctx, keys); err != nil {
+			return 0, err
+		}
+	}
+	s.thumbCache.Flush()
+	return len(keys), nil
+}
+
 func (s *Service) ClearCache(ctx context.Context, prefix string) error {
 	if prefix == "" {
 		return s.cache.DeletePrefix(ctx, "")
@@ -405,37 +593,94 @@ func (s *Service) PresignUpload(ctx context.Context, prefix, name, contentType s
 	if err := storage.GuardUserKey(prefix); err != nil && prefix != "" {
 		return models.Presign{}, err
 	}
-	name, err = storage.SanitizeName(name)
+	if err := s.denyIfLocked(ctx, prefix); err != nil {
+		return models.Presign{}, err
+	}
+	name, err = storage.SanitizeRelPath(name)
 	if err != nil {
 		return models.Presign{}, err
 	}
-	if storage.IsReservedName(name) {
-		return models.Presign{}, storage.ErrReserved
-	}
 	key := storage.JoinKey(prefix, name)
 	contentType = storage.ContentTypeFromName(name, contentType)
-	return s.s3.PresignPut(ctx, key, contentType)
+	spec, err := s.s3.PresignPut(ctx, s.abs(key), contentType)
+	if err != nil {
+		return models.Presign{}, err
+	}
+	spec.Key = s.abs(key)
+	return spec, nil
 }
 
-func (s *Service) CompleteUploads(ctx context.Context, keys []string) error {
+func (s *Service) CompleteUploads(ctx context.Context, prefix string, keys, folders []string) error {
+	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil {
+		return err
+	}
+	if err := storage.GuardUserKey(prefix); err != nil && prefix != "" {
+		return err
+	}
+	if err := s.denyIfLocked(ctx, prefix); err != nil {
+		return err
+	}
+	for _, rel := range folders {
+		rel, err := storage.SanitizeRelPath(rel)
+		if err != nil {
+			return err
+		}
+		folderKey := storage.JoinKey(prefix, rel) + "/"
+		if err := s.s3.PutFolder(ctx, s.abs(folderKey)); err != nil {
+			return err
+		}
+		if err := s.rememberFolderTree(ctx, folderKey); err != nil {
+			return err
+		}
+	}
 	for _, raw := range keys {
 		key, err := storage.NormalizeObjectKey(raw)
 		if err != nil {
 			return err
 		}
-		if err := storage.GuardUserKey(key); err != nil {
+		logical := s.rel(key)
+		if err := storage.GuardUserKey(logical); err != nil {
 			return err
 		}
-		entry, err := s.s3.Head(ctx, key)
+		if err := s.denyIfLocked(ctx, logical); err != nil {
+			return err
+		}
+		entry, err := s.s3.Head(ctx, s.abs(logical))
 		if err != nil {
-			return fmt.Errorf("head %s: %w", key, err)
+			return fmt.Errorf("head %s: %w", logical, err)
 		}
-		if err := s.cache.UpsertObject(ctx, storage.ParentPrefix(key), entry); err != nil {
+		entry.Key = logical
+		if err := s.cache.UpsertObject(ctx, storage.ParentPrefix(logical), entry); err != nil {
 			return err
 		}
-		if entry.Kind == models.KindImage || entry.Kind == models.KindVideo {
-			_, _ = thumbs.Ensure(ctx, s.s3, key, entry.Kind)
+		if err := s.rememberFolderTree(ctx, storage.ParentPrefix(logical)); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func (s *Service) rememberFolderTree(ctx context.Context, folderKey string) error {
+	if folderKey == "" {
+		return nil
+	}
+	parent, err := storage.NormalizePrefix(folderKey)
+	if err != nil {
+		return err
+	}
+	for parent != "" {
+		grand := storage.ParentPrefix(parent)
+		entry := models.Entry{
+			Key:   parent,
+			Name:  storage.BaseName(parent),
+			IsDir: true,
+			Kind:  models.KindFolder,
+		}
+		if err := s.cache.UpsertObject(ctx, grand, entry); err != nil {
+			return err
+		}
+		parent = grand
 	}
 	return nil
 }
@@ -453,6 +698,146 @@ func (s *Service) trashBatch(ctx context.Context, batchID string) (models.TrashI
 	return models.TrashItem{}, fmt.Errorf("trash item not found")
 }
 
+func (s *Service) ProtectFolder(ctx context.Context, prefix, password string) error {
+	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil {
+		return err
+	}
+	if prefix == "" {
+		return locks.ErrRoot
+	}
+	if err := storage.GuardUserKey(prefix); err != nil {
+		return err
+	}
+	if err := s.denyIfLocked(ctx, storage.ParentPrefix(prefix)); err != nil {
+		return err
+	}
+	return s.locks.Protect(ctx, prefix, password)
+}
+
+func (s *Service) UnprotectFolder(ctx context.Context, prefix, password string) error {
+	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil {
+		return err
+	}
+	return s.locks.Unprotect(ctx, prefix, password)
+}
+
+func (s *Service) UnlockFolder(ctx context.Context, prefix, password string) (string, error) {
+	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil {
+		return "", err
+	}
+	covering, locked := s.lockedBy(ctx, prefix)
+	if !locked {
+		return prefix, nil
+	}
+	if err := s.locks.Check(ctx, covering, password); err != nil {
+		return "", err
+	}
+	return covering, nil
+}
+
+func (s *Service) denyIfLocked(ctx context.Context, key string) error {
+	if _, locked := s.lockedBy(ctx, key); locked {
+		return locks.ErrLocked
+	}
+	return nil
+}
+
+func (s *Service) lockedBy(ctx context.Context, key string) (string, bool) {
+	prefix := key
+	if key != "" && !storage.IsFolderKey(key) {
+		prefix = storage.ParentPrefix(key)
+	}
+	covers, err := s.locks.Covering(ctx, prefix)
+	if err != nil || len(covers) == 0 {
+		return "", false
+	}
+	open := unlockedSet(locks.Unlocked(ctx))
+	for _, p := range covers {
+		if !open[p] {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+func (s *Service) markLocks(ctx context.Context, entries []models.Entry) error {
+	open := unlockedSet(locks.Unlocked(ctx))
+	for i := range entries {
+		if !entries[i].IsDir {
+			continue
+		}
+		ok, err := s.locks.IsProtected(ctx, entries[i].Key)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		entries[i].Protected = true
+		if !open[entries[i].Key] {
+			entries[i].Locked = true
+		}
+	}
+	return nil
+}
+
+func unlockedSet(prefixes []string) map[string]bool {
+	out := make(map[string]bool, len(prefixes))
+	for _, p := range prefixes {
+		if p == "" {
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		out[p] = true
+	}
+	return out
+}
+
+func (s *Service) ServeThumb(ctx context.Context, thumbKey string) ([]byte, string, string, error) {
+	if !storage.IsThumbKey(thumbKey) {
+		return nil, "", "", storage.ErrInvalidPath
+	}
+	source, ok := storage.SourceKeyFromThumb(thumbKey)
+	if !ok {
+		return nil, "", "", storage.ErrInvalidPath
+	}
+	if err := s.denyIfLocked(ctx, s.rel(source)); err != nil {
+		return nil, "", "", err
+	}
+	if item, hit := s.thumbCache.Get(thumbKey); hit {
+		return item.Data, item.Type, item.ETag, nil
+	}
+	raw, ctype, err := s.s3.Get(ctx, thumbKey)
+	if err != nil || len(raw) == 0 {
+		kind := models.KindImage
+		if storage.IsVideoThumb(thumbKey) {
+			kind = models.KindVideo
+		}
+		if _, genErr := thumbs.Ensure(ctx, s.s3, source, kind); genErr != nil {
+			if err != nil {
+				return nil, "", "", err
+			}
+			return nil, "", "", genErr
+		}
+		raw, ctype, err = s.s3.Get(ctx, thumbKey)
+		if err != nil {
+			return nil, "", "", err
+		}
+	}
+	if ctype == "" {
+		ctype = "image/webp"
+	}
+	sum := sha256.Sum256(raw)
+	etag := fmt.Sprintf(`"%x"`, sum[:8])
+	s.thumbCache.Put(thumbKey, raw, ctype, etag)
+	return raw, ctype, etag, nil
+}
+
 func (s *Service) attachURLs(ctx context.Context, entries []models.Entry) error {
 	for i := range entries {
 		if entries[i].IsDir {
@@ -461,25 +846,25 @@ func (s *Service) attachURLs(ctx context.Context, entries []models.Entry) error 
 		if err := s.enrichKind(ctx, &entries[i]); err != nil {
 			return err
 		}
-		url, err := s.s3.PresignGet(ctx, entries[i].Key)
+		s3key := s.abs(entries[i].Key)
+		url, err := s.s3.PresignGet(ctx, s3key)
 		if err != nil {
 			return err
 		}
 		entries[i].DownloadURL = url
+		if save, err := s.s3.PresignDownload(ctx, s3key, entries[i].Name); err == nil {
+			entries[i].SaveURL = save
+		}
 		switch entries[i].Kind {
 		case models.KindImage, models.KindAudio, models.KindVideo, models.KindPDF:
 			entries[i].PreviewURL = url
 		}
 		if entries[i].Kind == models.KindImage || entries[i].Kind == models.KindVideo {
-			if thumbURLs, ok := thumbs.Existing(ctx, s.s3, entries[i].Key, entries[i].Kind); ok {
-				entries[i].ThumbURLs = thumbURLs
-				entries[i].ThumbURL = thumbURLs[0]
-			} else {
-				thumbs.EnsureLater(s.s3, entries[i].Key, entries[i].Kind)
-				if entries[i].Kind == models.KindImage {
-					entries[i].ThumbURL = url
-				}
+			if urls := thumbs.LocalURLs(s3key, entries[i].Kind); len(urls) > 0 {
+				entries[i].ThumbURLs = urls
+				entries[i].ThumbURL = urls[0]
 			}
+			thumbs.EnsureLater(s.s3, s3key, entries[i].Kind)
 		}
 	}
 	return nil
@@ -490,7 +875,7 @@ func (s *Service) enrichKind(ctx context.Context, e *models.Entry) error {
 	if e.Kind != models.KindFile && e.ContentType != "" && e.ContentType != "application/octet-stream" {
 		return nil
 	}
-	headed, err := s.s3.Head(ctx, e.Key)
+	headed, err := s.s3.Head(ctx, s.abs(e.Key))
 	if err != nil {
 		return nil
 	}

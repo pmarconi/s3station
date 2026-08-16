@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	_ "image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +64,7 @@ func generateVideo(ctx context.Context, s3c *s3store.Client, key string) error {
 	duration := probeDuration(ctx, srcURL)
 	stamps := frameTimes(duration, storage.VideoThumbCount)
 	for i, stamp := range stamps {
-		dest := filepath.Join(dir, fmt.Sprintf("%02d.jpg", i))
+		dest := filepath.Join(dir, fmt.Sprintf("%02d.png", i))
 		if err := extractFrame(ctx, srcURL, stamp, dest); err != nil {
 			return fmt.Errorf("frame %d: %w", i, err)
 		}
@@ -73,7 +75,15 @@ func generateVideo(ctx context.Context, s3c *s3store.Client, key string) error {
 		if len(bytes.TrimSpace(raw)) == 0 {
 			return fmt.Errorf("frame %d was empty", i)
 		}
-		if err := s3c.Put(ctx, storage.VideoThumbKey(key, i), raw, "image/jpeg"); err != nil {
+		frame, _, err := image.Decode(bytes.NewReader(raw))
+		if err != nil {
+			return fmt.Errorf("frame %d decode: %w", i, err)
+		}
+		webp, err := encodeWebP(frame)
+		if err != nil {
+			return fmt.Errorf("frame %d webp: %w", i, err)
+		}
+		if err := s3c.Put(ctx, storage.VideoThumbKey(key, i), webp, "image/webp"); err != nil {
 			return err
 		}
 	}

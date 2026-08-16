@@ -27,14 +27,36 @@ type Entry struct {
 	PreviewURL   string    `json:"previewUrl,omitempty"`
 	ThumbURL     string    `json:"thumbUrl,omitempty"`
 	ThumbURLs    []string  `json:"thumbUrls,omitempty"`
-	DownloadURL  string    `json:"downloadUrl,omitempty"`
+	Thumbs        []Thumb   `json:"thumbs,omitempty"`
+	ThumbsPending bool      `json:"-"`
+	DownloadURL   string    `json:"downloadUrl,omitempty"`
+	SaveURL       string    `json:"saveUrl,omitempty"`
+	Locked        bool      `json:"locked,omitempty"`
+	Protected     bool      `json:"protected,omitempty"`
+}
+
+// Thumb is one generated preview of a source object.
+// Several rows can share a source: video frames (position) and later sizes (variant).
+type Thumb struct {
+	SourceKey   string `json:"sourceKey"`
+	ThumbKey    string `json:"thumbKey"`
+	Variant     string `json:"variant"`
+	Position    int    `json:"position"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+	URL         string `json:"url,omitempty"`
 }
 
 type Listing struct {
-	Prefix    string
-	Entries   []Entry
-	FromCache bool
-	FetchedAt time.Time
+	Prefix        string
+	Entries       []Entry
+	FromCache     bool
+	FetchedAt     time.Time
+	ThumbsPending bool
+	Locked        bool
+	LockedPrefix  string
+	Protected     bool
 }
 
 type Crumb struct {
@@ -60,4 +82,6 @@ type TrashItem struct {
 	TrashKeys   []string
 	Kind        Kind
 	PreviewURL  string
+	ThumbURL    string
+	ThumbURLs   []string
 }

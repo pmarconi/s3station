@@ -1,5 +1,7 @@
 Datastar Docs 🚀
 
+How this app uses Datastar (signals, patches, what not to @get): `docs/context/datastar-app.md`
+
 > HTML version available at https://data-star.dev/docs
 
 # Getting Started

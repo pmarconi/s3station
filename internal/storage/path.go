@@ -5,13 +5,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
 )
 
 const (
+	FilesPrefix = "files/"
 	TrashPrefix = ".station-trash/"
 	ThumbPrefix = ".station-thumbs/"
 )
@@ -72,6 +75,27 @@ func SanitizeName(name string) (string, error) {
 		return "", ErrInvalidPath
 	}
 	return name, nil
+}
+
+func SanitizeRelPath(name string) (string, error) {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Trim(name, "/")
+	if name == "" {
+		return "", ErrInvalidPath
+	}
+	parts := strings.Split(name, "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part, err := SanitizeName(part)
+		if err != nil {
+			return "", err
+		}
+		if IsReservedName(part) {
+			return "", ErrReserved
+		}
+		clean = append(clean, part)
+	}
+	return strings.Join(clean, "/"), nil
 }
 
 func JoinKey(prefix, name string) string {
@@ -138,21 +162,66 @@ func IsThumbKey(key string) bool {
 }
 
 func ThumbKey(original string) string {
-	return ThumbPrefix + strings.TrimPrefix(original, "/") + ".jpg"
+	return ThumbPrefix + strings.TrimPrefix(original, "/") + ".webp"
 }
 
 const VideoThumbCount = 5
 
 func VideoThumbKey(original string, i int) string {
-	return fmt.Sprintf("%s%s.v%02d.jpg", ThumbPrefix, strings.TrimPrefix(original, "/"), i)
+	return fmt.Sprintf("%s%s.v%02d.webp", ThumbPrefix, strings.TrimPrefix(original, "/"), i)
 }
 
 func AllThumbKeys(original string) []string {
-	keys := []string{ThumbKey(original)}
+	base := ThumbPrefix + strings.TrimPrefix(original, "/")
+	keys := []string{base + ".webp", base + ".jpg"}
 	for i := 0; i < VideoThumbCount; i++ {
-		keys = append(keys, VideoThumbKey(original, i))
+		keys = append(keys, fmt.Sprintf("%s.v%02d.webp", base, i), fmt.Sprintf("%s.v%02d.jpg", base, i))
 	}
 	return keys
+}
+
+var videoThumbSuffix = regexp.MustCompile(`\.v\d{2}\.(webp|jpg)$`)
+
+func PublicThumbPath(thumbKey string) string {
+	rest := strings.TrimPrefix(thumbKey, ThumbPrefix)
+	parts := strings.Split(rest, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return "/thumbs/" + strings.Join(parts, "/")
+}
+
+func ThumbKeyFromPublic(rest string) (string, error) {
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "/"))
+	if rest == "" || strings.Contains(rest, "..") || strings.ContainsRune(rest, 0) {
+		return "", ErrInvalidPath
+	}
+	key := ThumbPrefix + rest
+	if !IsThumbKey(key) || (!strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".jpg")) {
+		return "", ErrInvalidPath
+	}
+	return key, nil
+}
+
+func IsVideoThumb(thumbKey string) bool {
+	return videoThumbSuffix.MatchString(thumbKey)
+}
+
+func SourceKeyFromThumb(thumbKey string) (string, bool) {
+	rest, ok := strings.CutPrefix(thumbKey, ThumbPrefix)
+	if !ok || rest == "" {
+		return "", false
+	}
+	if loc := videoThumbSuffix.FindStringIndex(rest); loc != nil {
+		return rest[:loc[0]], true
+	}
+	if strings.HasSuffix(rest, ".webp") {
+		return strings.TrimSuffix(rest, ".webp"), true
+	}
+	if strings.HasSuffix(rest, ".jpg") {
+		return strings.TrimSuffix(rest, ".jpg"), true
+	}
+	return "", false
 }
 
 func GuardUserKey(key string) error {
@@ -160,6 +229,33 @@ func GuardUserKey(key string) error {
 		return ErrReserved
 	}
 	return nil
+}
+
+func AbsUserKey(root, key string) string {
+	if root == "" {
+		root = FilesPrefix
+	}
+	if key == "" {
+		return root
+	}
+	if IsTrashKey(key) || IsThumbKey(key) {
+		return key
+	}
+	key = strings.TrimLeft(key, "/")
+	if strings.HasPrefix(key, root) {
+		return key
+	}
+	return root + key
+}
+
+func RelUserKey(root, key string) string {
+	if root == "" {
+		root = FilesPrefix
+	}
+	if IsTrashKey(key) || IsThumbKey(key) {
+		return key
+	}
+	return strings.TrimPrefix(key, root)
 }
 
 func NewTrashKey(original string) string {

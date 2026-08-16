@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"image"
 	_ "image/gif"
-	"image/jpeg"
+	_ "image/jpeg"
 	_ "image/png"
 	"time"
 
 	"github.com/disintegration/imaging"
+	_ "golang.org/x/image/webp"
 
 	"station/internal/models"
 	"station/internal/s3store"
@@ -19,24 +20,16 @@ import (
 
 const maxEdge = 256
 
-func Existing(ctx context.Context, s3c *s3store.Client, key string, kind models.Kind) ([]string, bool) {
+func LocalURLs(key string, kind models.Kind) []string {
 	keys := thumbKeys(key, kind)
 	if len(keys) == 0 {
-		return nil, false
+		return nil
 	}
-	urls := make([]string, 0, len(keys))
-	for _, thumbKey := range keys {
-		exists, err := s3c.Exists(ctx, thumbKey)
-		if err != nil || !exists {
-			return nil, false
-		}
-		url, err := s3c.PresignGet(ctx, thumbKey)
-		if err != nil {
-			return nil, false
-		}
-		urls = append(urls, url)
+	urls := make([]string, len(keys))
+	for i, thumbKey := range keys {
+		urls[i] = storage.PublicThumbPath(thumbKey)
 	}
-	return urls, true
+	return urls
 }
 
 func EnsureLater(s3c *s3store.Client, key string, kind models.Kind) {
@@ -143,9 +136,9 @@ func generateImage(ctx context.Context, s3c *s3store.Client, src, dest string) e
 		return fmt.Errorf("decode image: %w", err)
 	}
 	thumb := imaging.Fit(img, maxEdge, maxEdge, imaging.Lanczos)
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, thumb, &jpeg.Options{Quality: 82}); err != nil {
+	raw, err = encodeWebP(thumb)
+	if err != nil {
 		return err
 	}
-	return s3c.Put(ctx, dest, buf.Bytes(), "image/jpeg")
+	return s3c.Put(ctx, dest, raw, "image/webp")
 }

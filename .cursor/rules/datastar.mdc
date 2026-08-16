@@ -1,0 +1,17 @@
+---
+description: How this app uses Datastar for in-page UI (signals, SSE patches, when not to use it)
+globs: internal/views/**/*.templ,internal/web/**/*.go,internal/web/assets/js/**/*.js
+alwaysApply: false
+---
+
+# Datastar
+
+Read `docs/context/datastar-app.md` before changing depot/trash/settings UI.
+
+- In-page actions use `data-on` + `@get`/`@post`. The Go handler reads `web.Signals` and replies with SSE: `PatchElementTempl` on a stable id (`#file-panel`, `#crumbs`, `#meta-bar`, `#trash-panel`) plus `MarshalAndPatchSignals`.
+- Full pages (`/`, `/trash`, `/settings`, `/login`) are normal HTML. Zip, thumbs, and upload/move JSON are **not** Datastar.
+- New signals go in `InitialSignals` and must be cleared in `patchListing` / `patchTrash` / `flash` when the action finishes.
+- Per-row keys belong in helper JS expressions (`NavigateExpr`, `TrashExpr`), not in the URL.
+- `upload.js` talks to the server with `fetch` and dispatches `station-uploaded` / `station-moved`; Datastar listens on `data-on:*__window` and then `@get('/files')`.
+- Never use `else if` on templ **attributes** (it prints a literal ` else`). Use two `if` blocks.
+- After templ or embedded JS/CSS changes, regenerate and rebuild Go.

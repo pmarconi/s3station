@@ -8,67 +8,155 @@ import (
 templ Browser(user string, listing models.Listing) {
 	@Layout("Station") {
 		<div
+			class="drawer lg:drawer-open"
 			data-attr:data-current-prefix="$prefix"
-			data-signals={ InitialSignals(listing.Prefix) }
+			data-attr:data-locked="$_locked"
+			data-signals={ InitialSignals(listing) }
 			data-on:station-upload-start__window="$_busy = true; $_flash = evt.detail.message; $_flashKind = 'ok'"
 			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
 			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
-			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showDelete = $_showPreview = false)"
+			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
-			@Topbar(user, "depot")
-			<main class="page">
-				@Toolbar(listing)
-				@FilePanel(listing)
-			</main>
+			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
+			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
+				@Topbar(user, "Depot")
+				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
+					@Toolbar(listing)
+					<div class="relative">
+						@FilePanel(listing)
+						<div id="listing-loading" class="absolute inset-0 z-20 grid min-h-48 place-items-center rounded-box bg-base-200/70 backdrop-blur-[1px]" data-show="$_busy" style="display: none">
+							<div class="flex flex-col items-center gap-2">
+								<span class="loading loading-spinner loading-lg text-primary"></span>
+								<span class="text-sm text-base-content/70">Loading folder…</span>
+							</div>
+						</div>
+					</div>
+				</main>
+			</div>
+			<div class="drawer-side">
+				<label for="station-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+				@Sidebar(user, "files")
+			</div>
 			@BrowserModals()
 			@DropOverlay()
 		</div>
 	}
 }
 
-templ Topbar(user string, section string) {
-	<div class="navbar bg-base-100 shadow-sm">
-		<div class="navbar-start">
-			<a href="/" class="btn btn-ghost text-xl">Station</a>
-			<ul class="menu menu-horizontal px-1">
-				<li>
-					<a href="/" class={ templ.KV("menu-active", section == "depot") }>Depot</a>
-				</li>
-				<li>
-					<a href="/settings" class={ templ.KV("menu-active", section == "settings") }>Settings</a>
-				</li>
+templ Topbar(user string, title string) {
+	<header class="navbar sticky top-0 z-30 gap-2 border-b border-base-300 bg-base-100/90 px-4 shadow-sm backdrop-blur sm:px-6">
+		<div class="flex-none lg:hidden">
+			<label for="station-drawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
+				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block h-6 w-6 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+			</label>
+		</div>
+		<div class="flex-1">
+			<span class="text-base font-semibold">{ title }</span>
+		</div>
+		<div class="flex-none gap-1">
+			<span class="loading loading-spinner loading-sm text-primary" data-show="$_busy" style="display: none"></span>
+			<div class="dropdown dropdown-end">
+				<div tabindex="0" role="button" class="btn btn-circle btn-neutral btn-sm font-semibold" aria-label="Account menu">
+					{ AvatarInitials(user) }
+				</div>
+				<ul tabindex="0" class="dropdown-content menu menu-sm rounded-box z-50 mt-2 w-56 bg-base-100 p-2 shadow-lg">
+					<li class="menu-title">
+						<span>Signed in as</span>
+						<span class="font-semibold text-base-content">{ user }</span>
+					</li>
+					<li><a href="/settings">Settings</a></li>
+					<li>
+						<button type="submit" form="logout-form">Sign out</button>
+					</li>
+				</ul>
+			</div>
+			<form id="logout-form" method="post" action="/logout" hidden></form>
+		</div>
+	</header>
+}
+
+templ Sidebar(user string, active string) {
+	<aside class="flex min-h-full w-72 flex-col border-r border-base-300 bg-base-100">
+		<div class="flex h-16 items-center gap-2 border-b border-base-300 px-5">
+			<span class="grid size-9 place-items-center rounded-lg bg-primary text-lg font-bold text-primary-content">S</span>
+			<span class="text-lg font-bold tracking-tight">Station</span>
+		</div>
+		<div class="flex-1 overflow-y-auto p-4">
+			if active == "files" {
+				<button class="btn btn-primary btn-block" data-on:click="$_showNewFolder = true" data-attr:disabled="$_locked">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+					New folder
+				</button>
+			}
+			<ul class="menu mt-4 w-full">
+				<li class="menu-title">Browse</li>
+				<li><a class={ templ.KV("menu-active", active == "files") } href="/">All files</a></li>
+				<li><a class={ templ.KV("menu-active", active == "trash") } href="/trash">Trash</a></li>
 			</ul>
 		</div>
-		<div class="navbar-end">
-			<span>{ user }</span>
-			<form method="post" action="/logout">
-				<button type="submit" class="btn btn-ghost">Sign out</button>
-			</form>
+		<div class="border-t border-base-300 p-4">
+			<div class="flex items-center gap-3">
+				<div class="grid size-10 place-items-center rounded-full bg-neutral text-sm font-semibold text-neutral-content">
+					{ AvatarInitials(user) }
+				</div>
+				<div class="min-w-0 flex-1">
+					<p class="truncate text-sm font-semibold">{ user }</p>
+					<a href="/settings" class="text-xs text-base-content/60 hover:text-primary">Settings</a>
+				</div>
+			</div>
 		</div>
-	</div>
+	</aside>
 }
 
 templ Toolbar(listing models.Listing) {
-	<section id="toolbar">
+	<section id="toolbar" class="mb-5">
 		@Crumbs(listing.Prefix)
-		<input type="search" class="input" placeholder="Filter this folder" data-bind:query/>
-		<button class="btn" data-on:click="$_showNewFolder = true">New folder</button>
-		<button type="button" class="btn btn-primary" id="upload-btn" data-attr:disabled="$_busy">Upload</button>
-		<input id="upload-input" type="file" multiple hidden/>
-		<div class="dropdown">
-			<div tabindex="0" role="button" class="btn" aria-label="Folder options">⋮</div>
-			<ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm">
-				<li>
-					<button type="button" data-on:click="document.activeElement.blur(); $refresh = true; @get('/files')" data-indicator:_busy>
-						Reload folder from the bucket
-					</button>
-				</li>
-			</ul>
-		</div>
-		<div class="join">
-			<button class="btn join-item" data-class:btn-active="$view === 'grid'" data-on:click="$view = 'grid'">Grid</button>
-			<button class="btn join-item" data-class:btn-active="$view === 'list'" data-on:click="$view = 'list'">List</button>
+		<div class="mt-2 flex flex-wrap items-center gap-2">
+			<label class="input input-bordered flex min-w-52 flex-1 items-center gap-2">
+				<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="size-4 opacity-70"><path fill-rule="evenodd" d="M9.965 11.026a5 5 0 1 1 1.06-1.06l2.755 2.754a.75.75 0 1 1-1.06 1.06l-2.755-2.754ZM10.5 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z" clip-rule="evenodd"/></svg>
+				<input type="search" class="grow" placeholder="Search this folder" data-bind:query/>
+			</label>
+			<button type="button" class="btn btn-primary" id="upload-btn" data-attr:disabled="$_busy || $_locked">
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M12 12V4m0 0 4 4m-4-4L8 8"/></svg>
+				Upload
+			</button>
+			<input id="upload-input" type="file" multiple hidden/>
+			<div class="dropdown dropdown-end">
+				<div tabindex="0" role="button" class="btn btn-square" aria-label="Folder options">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"/></svg>
+				</div>
+				<ul tabindex="0" class="dropdown-content menu rounded-box z-40 w-64 bg-base-100 p-2 shadow-lg">
+					<li data-show="!$_locked">
+						<a href={ templ.SafeURL(ArchiveHref(listing.Prefix)) } data-attr:href="'/folders/archive?prefix=' + encodeURIComponent($prefix || '')">
+							Download zip
+						</a>
+					</li>
+					<li>
+						<button type="button" data-on:click="document.activeElement.blur(); $refresh = true; @get('/files')" data-indicator:_busy>
+							Reload folder from the bucket
+						</button>
+					</li>
+					<li data-show="$prefix !== '' && !$_locked && !$_protected">
+						<button type="button" data-on:click="document.activeElement.blur(); $folderPassword = ''; $_showProtect = true">
+							Protect this folder
+						</button>
+					</li>
+					<li data-show="$_protected && !$_locked">
+						<button type="button" data-on:click="document.activeElement.blur(); $folderPassword = ''; $_showUnprotect = true">
+							Remove folder password
+						</button>
+					</li>
+				</ul>
+			</div>
+			<div class="join">
+				<button class="btn join-item" data-class:btn-active="$view === 'grid'" data-on:click="$view = 'grid'" aria-label="Grid view">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg>
+				</button>
+				<button class="btn join-item" data-class:btn-active="$view === 'list'" data-on:click="$view = 'list'" aria-label="List view">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+				</button>
+			</div>
 		</div>
 		@MetaBar(listing)
 	</section>
@@ -79,7 +167,7 @@ templ Crumbs(prefix string) {
 		<ul>
 			for _, c := range filesvc.Breadcrumbs(prefix) {
 				<li>
-					<a data-station-folder={ c.Prefix } data-on:click={ NavigateExpr(c.Prefix) }>{ c.Name }</a>
+					<a data-station-folder={ c.Prefix } data-on:click={ NavigateExpr(c.Prefix) } data-indicator:_busy>{ c.Name }</a>
 				</li>
 			}
 		</ul>
@@ -87,24 +175,51 @@ templ Crumbs(prefix string) {
 }
 
 templ MetaBar(listing models.Listing) {
-	<div id="meta-bar">
+	<div id="meta-bar" class="mt-3 flex items-center gap-2 text-sm text-base-content/60">
 		<span>{ filesvc.FormatBytes(TotalSize(listing.Entries)) } · { ItemCount(listing.Entries) }</span>
-		if listing.FromCache {
-			<span class="badge badge-ghost">{ CacheLabel(listing) }</span>
-		} else {
-			<span class="badge badge-success">{ CacheLabel(listing) }</span>
+		if listing.Protected {
+			<span class="badge badge-warning badge-sm">Password protected</span>
 		}
-		<span class="loading loading-spinner" data-show="$_busy" style="display: none"></span>
+		if listing.FromCache {
+			<span class="badge badge-ghost badge-sm">{ CacheLabel(listing) }</span>
+		} else {
+			<span class="badge badge-success badge-sm">{ CacheLabel(listing) }</span>
+		}
 	</div>
 }
 
 templ FilePanel(listing models.Listing) {
-	<section id="file-panel" data-class:is-list="$view === 'list'">
-		if len(listing.Entries) == 0 {
-			<div class="card bg-base-200 shadow-sm">
-				<div class="card-body">
-					<h2 class="card-title">This folder is empty</h2>
-					<p>Drop files here or upload. They go directly to your S3 bucket.</p>
+	<section id="file-panel" class="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" data-class:is-list="$view === 'list'">
+		if listing.Locked {
+			<div class="col-span-full">
+				<div class="hero rounded-box border border-base-300 bg-base-100 py-16">
+					<div class="hero-content text-center">
+						<div class="max-w-sm">
+							<div class="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-warning/15 text-warning">
+								<svg xmlns="http://www.w3.org/2000/svg" class="size-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.5 10.5V7.5a4.5 4.5 0 1 0-9 0v3m-.75 0h10.5A1.75 1.75 0 0 1 19 12.25v7A1.75 1.75 0 0 1 17.25 21H6.75A1.75 1.75 0 0 1 5 19.25v-7A1.75 1.75 0 0 1 6.75 10.5Z"/></svg>
+							</div>
+							<h2 class="text-lg font-bold">This folder is locked</h2>
+							<p class="mt-1 text-sm text-base-content/60">Enter the folder password to browse it in Station. Direct bucket access still sees the objects.</p>
+							<form class="mt-4 grid gap-3 text-left" data-on:submit="$targetKey = $prefix; @post('/folders/unlock')">
+								<input type="password" class="input input-bordered w-full" data-bind:folderPassword placeholder="Folder password" required autocomplete="off"/>
+								<button type="submit" class="btn btn-primary btn-block">Unlock</button>
+							</form>
+						</div>
+					</div>
+				</div>
+			</div>
+		} else if len(listing.Entries) == 0 {
+			<div class="col-span-full">
+				<div class="hero rounded-box border border-dashed border-base-300 bg-base-100 py-16">
+					<div class="hero-content text-center">
+						<div>
+							<div class="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-base-300 text-primary">
+								<svg xmlns="http://www.w3.org/2000/svg" class="size-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+							</div>
+							<h2 class="text-lg font-bold">This folder is empty</h2>
+							<p class="mt-1 text-base-content/60">Drop files here or use Upload. They go directly to your S3 bucket.</p>
+						</div>
+					</div>
 				</div>
 			</div>
 		} else {
@@ -116,13 +231,15 @@ templ FilePanel(listing models.Listing) {
 }
 
 templ FileCard(e models.Entry) {
-	<div
-		class="card bg-base-200 shadow-sm"
-		data-class:card-side="$view === 'list'"
+	<article
+		class="file-tile group"
 		data-show={ FilterExpr(e.Name) }
-		if e.IsDir {
+		if e.IsDir && !e.Locked {
+			draggable="true"
+			data-station-key={ e.Key }
 			data-station-folder={ e.Key }
-		} else {
+		}
+		if !e.IsDir {
 			draggable="true"
 			data-station-key={ e.Key }
 		}
@@ -131,67 +248,128 @@ templ FileCard(e models.Entry) {
 			data-gallery-name={ e.Name }
 		}
 	>
-		if e.IsDir {
-			<div class="card-body" data-on:click={ NavigateExpr(e.Key) }>
-				@FileGlyph(e.Kind)
-				<h2 class="card-title">{ e.Name }</h2>
-				<p>{ ItemMeta(e) }</p>
-				<div class="card-actions">
-					<button class="btn btn-ghost btn-sm btn-error" type="button" data-on:click={ TrashExpr(e) }>Trash</button>
+		<div
+			class="file-tile-preview relative aspect-square w-full cursor-pointer"
+			if e.IsDir {
+				data-on:click={ FolderClickExpr(e) }
+				data-indicator:_busy
+			}
+			if !e.IsDir && e.Kind != models.KindImage {
+				data-on:click={ PreviewExpr(e) }
+			}
+		>
+			<div class="h-full w-full overflow-hidden rounded-xl bg-base-100">
+				@TilePreview(e)
+			</div>
+			<div class="absolute top-2 right-2 z-20 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100" data-on:click="evt.stopPropagation()">
+				<div class="dropdown dropdown-end">
+					<div tabindex="0" role="button" class="btn btn-circle btn-sm btn-neutral" aria-label="Item options">
+						<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.25a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z"/></svg>
+					</div>
+					<ul tabindex="0" class="dropdown-content menu rounded-box z-50 mt-1 w-44 bg-base-100 p-2 shadow-lg">
+						if e.IsDir && e.Locked {
+							<li><button type="button" data-on:click={ UnlockExpr(e) }>Unlock</button></li>
+						} else if e.IsDir {
+							<li><button type="button" data-on:click={ NavigateExpr(e.Key) }>Open</button></li>
+							<li><a href={ templ.SafeURL(ArchiveHref(e.Key)) }>Download zip</a></li>
+							<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
+							<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
+						} else {
+							if e.DownloadURL != "" {
+								<li><a href={ templ.SafeURL(e.DownloadURL) } target="_blank" rel="noreferrer">Open</a></li>
+							}
+							if e.SaveURL != "" {
+								<li><a href={ templ.SafeURL(e.SaveURL) } download={ e.Name } rel="noreferrer">Download</a></li>
+							}
+							<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>
+							<li><button type="button" class="text-error" data-on:click={ TrashExpr(e) }>Trash</button></li>
+						}
+					</ul>
 				</div>
 			</div>
-		} else {
-			<div
-				if e.Kind != models.KindImage {
-					data-on:click={ PreviewExpr(e) }
-				}
-			>
-				@CardThumbs(e)
-			</div>
-			<div class="card-body">
-				<h2 class="card-title">{ e.Name }</h2>
-				<p>{ ItemMeta(e) }</p>
-				<div class="card-actions">
-					if e.DownloadURL != "" {
-						<a class="btn btn-sm" href={ templ.SafeURL(e.DownloadURL) } target="_blank" rel="noreferrer">Open</a>
-					}
-					<button class="btn btn-sm btn-error" type="button" data-on:click={ TrashExpr(e) }>Trash</button>
-				</div>
-			</div>
-		}
-	</div>
+		</div>
+		<div class="file-tile-meta mt-2 min-w-0">
+			<p class="truncate text-sm font-medium" title={ e.Name }>{ e.Name }</p>
+			<p class="truncate text-xs text-base-content/50">{ ItemMeta(e) }</p>
+		</div>
+	</article>
 }
 
-templ CardThumbs(e models.Entry) {
-	if len(e.ThumbURLs) > 1 {
-		<figure class="hover-gallery">
-			for _, u := range e.ThumbURLs {
-				<img src={ templ.SafeURL(u) } alt={ e.Name } draggable="false"/>
+templ TilePreview(e models.Entry) {
+	if e.IsDir {
+		<div class={ "grid h-full w-full place-items-center", templ.KV("bg-warning/10 text-warning", e.Locked), templ.KV("bg-base-300 text-primary", !e.Locked) }>
+			if e.Locked {
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.5 10.5V7.5a4.5 4.5 0 1 0-9 0v3m-.75 0h10.5A1.75 1.75 0 0 1 19 12.25v7A1.75 1.75 0 0 1 17.25 21H6.75A1.75 1.75 0 0 1 5 19.25v-7A1.75 1.75 0 0 1 6.75 10.5Z"/></svg>
+			} else {
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
 			}
-		</figure>
+		</div>
+	} else if len(e.ThumbURLs) > 1 {
+		<div class="hover-gallery bg-base-300">
+			for i, u := range e.ThumbURLs {
+				<img
+					src={ templ.SafeURL(u) }
+					alt={ e.Name }
+					class="absolute inset-0 h-full w-full object-cover"
+					draggable="false"
+					if i == 0 {
+						loading="eager"
+					} else {
+						loading="lazy"
+					}
+				/>
+			}
+			if e.Kind == models.KindVideo {
+				<span class="absolute right-2 bottom-2 grid size-8 place-items-center rounded-full bg-neutral/80 text-neutral-content">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72L19.06 12 8 5.14Z"/></svg>
+				</span>
+			}
+		</div>
 	} else if e.ThumbURL != "" {
-		<figure>
-			<img src={ templ.SafeURL(e.ThumbURL) } alt={ e.Name } draggable="false"/>
-		</figure>
+		<div class="relative h-full w-full bg-base-300">
+			<img src={ templ.SafeURL(e.ThumbURL) } alt={ e.Name } class="absolute inset-0 h-full w-full object-cover" draggable="false" loading="lazy"/>
+			if e.Kind == models.KindVideo {
+				<span class="absolute right-2 bottom-2 grid size-8 place-items-center rounded-full bg-neutral/80 text-neutral-content">
+					<svg xmlns="http://www.w3.org/2000/svg" class="size-4" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72L19.06 12 8 5.14Z"/></svg>
+				</span>
+			}
+		</div>
 	} else if e.Kind == models.KindImage && e.PreviewURL != "" {
-		<figure>
-			<img src={ templ.SafeURL(e.PreviewURL) } alt={ e.Name } draggable="false"/>
-		</figure>
+		<img src={ templ.SafeURL(e.PreviewURL) } alt={ e.Name } class="h-full w-full object-cover" draggable="false" loading="lazy"/>
 	} else {
-		<figure>
+		<div class="grid h-full w-full place-items-center bg-base-300 text-primary">
 			@FileGlyph(e.Kind)
-		</figure>
+		</div>
 	}
 }
 
 templ BrowserModals() {
+	<dialog class="modal" data-attr:open="$_showRename">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Rename</h3>
+			<p class="py-2 text-base-content/70">Current name: <strong data-text="$targetName"></strong></p>
+			<form data-on:submit="@post('/files/rename')">
+				<fieldset class="fieldset">
+					<legend class="fieldset-legend">New name</legend>
+					<input class="input input-bordered w-full" data-bind:renameTo required autocomplete="off"/>
+				</fieldset>
+				<div class="modal-action">
+					<button type="button" class="btn" data-on:click="$_showRename = false">Cancel</button>
+					<button type="submit" class="btn btn-primary">Rename</button>
+				</div>
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showRename = false">close</button>
+		</form>
+	</dialog>
 	<dialog class="modal" data-attr:open="$_showNewFolder">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">New folder</h3>
 			<form data-on:submit="@post('/folders')">
 				<fieldset class="fieldset">
 					<legend class="fieldset-legend">Name</legend>
-					<input class="input" data-bind:newFolderName placeholder="Albums" required/>
+					<input class="input input-bordered w-full" data-bind:newFolderName placeholder="Albums" required/>
 				</fieldset>
 				<div class="modal-action">
 					<button type="button" class="btn" data-on:click="$_showNewFolder = false">Cancel</button>
@@ -203,10 +381,67 @@ templ BrowserModals() {
 			<button type="button" data-on:click="$_showNewFolder = false">close</button>
 		</form>
 	</dialog>
+	<dialog class="modal" data-attr:open="$_showUnlock">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Unlock folder</h3>
+			<p class="py-2 text-base-content/70">Enter the password for <strong data-text="$targetName"></strong>. This only unlocks it in this session. The objects stay readable in the bucket.</p>
+			<form data-on:submit="@post('/folders/unlock')">
+				<fieldset class="fieldset">
+					<legend class="fieldset-legend">Password</legend>
+					<input type="password" class="input input-bordered w-full" data-bind:folderPassword required autocomplete="off"/>
+				</fieldset>
+				<div class="modal-action">
+					<button type="button" class="btn" data-on:click="$_showUnlock = false">Cancel</button>
+					<button type="submit" class="btn btn-primary">Unlock</button>
+				</div>
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showUnlock = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showProtect">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Protect this folder</h3>
+			<p class="py-2 text-base-content/70">Station will hide the contents until someone enters this password. Anyone with bucket credentials can still list the objects in S3.</p>
+			<form data-on:submit="@post('/folders/protect')">
+				<fieldset class="fieldset">
+					<legend class="fieldset-legend">New password</legend>
+					<input type="password" class="input input-bordered w-full" data-bind:folderPassword required minlength="4" autocomplete="new-password"/>
+				</fieldset>
+				<div class="modal-action">
+					<button type="button" class="btn" data-on:click="$_showProtect = false">Cancel</button>
+					<button type="submit" class="btn btn-primary">Protect</button>
+				</div>
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showProtect = false">close</button>
+		</form>
+	</dialog>
+	<dialog class="modal" data-attr:open="$_showUnprotect">
+		<div class="modal-box">
+			<h3 class="text-lg font-bold">Remove folder password</h3>
+			<p class="py-2 text-base-content/70">Enter the current password to stop hiding this folder in Station.</p>
+			<form data-on:submit="@post('/folders/unprotect')">
+				<fieldset class="fieldset">
+					<legend class="fieldset-legend">Current password</legend>
+					<input type="password" class="input input-bordered w-full" data-bind:folderPassword required autocomplete="off"/>
+				</fieldset>
+				<div class="modal-action">
+					<button type="button" class="btn" data-on:click="$_showUnprotect = false">Cancel</button>
+					<button type="submit" class="btn btn-error">Remove password</button>
+				</div>
+			</form>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" data-on:click="$_showUnprotect = false">close</button>
+		</form>
+	</dialog>
 	<dialog class="modal" data-attr:open="$_showDelete">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Move to trash</h3>
-			<p>This removes <strong data-text="$targetName"></strong> from the depot. The object stays in the bucket under <code>.station-trash/</code> until you permanently delete it in Settings.</p>
+			<p class="py-2 text-base-content/70">This removes <strong data-text="$targetName"></strong> from the depot. The object stays in the bucket under <code>.station-trash/</code> until you permanently delete it in Trash.</p>
 			<div class="modal-action">
 				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
 				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/files/trash')">Move to trash</button>
@@ -217,12 +452,12 @@ templ BrowserModals() {
 		</form>
 	</dialog>
 	<dialog class="modal" data-attr:open="$_showPreview">
-		<div class="modal-box">
-			<h3 class="text-lg font-bold" data-text="$_previewName"></h3>
-			<audio data-show="$_previewKind === 'audio'" style="display: none" controls data-attr:src="$_previewURL"></audio>
-			<video data-show="$_previewKind === 'video'" style="display: none" controls data-attr:src="$_previewURL"></video>
-			<iframe data-show="$_previewKind === 'pdf'" style="display: none" data-attr:src="$_previewURL" title="PDF"></iframe>
-			<p data-show="!['image','audio','video','pdf'].includes($_previewKind)" style="display: none">No inline preview. Use Open on the card to download via a presigned URL.</p>
+		<div class="modal-box max-w-3xl">
+			<h3 class="truncate text-lg font-bold" data-text="$_previewName"></h3>
+			<audio class="mt-3 w-full" data-show="$_previewKind === 'audio'" style="display: none" controls data-attr:src="$_previewURL"></audio>
+			<video class="mt-3 max-h-[70vh] w-full rounded-box" data-show="$_previewKind === 'video'" style="display: none" controls data-attr:src="$_previewURL"></video>
+			<iframe class="mt-3 h-[70vh] w-full rounded-box" data-show="$_previewKind === 'pdf'" style="display: none" data-attr:src="$_previewURL" title="PDF"></iframe>
+			<p class="mt-3 text-base-content/70" data-show="!['image','audio','video','pdf'].includes($_previewKind)" style="display: none">No inline preview. Use Open on the card to download via a presigned URL.</p>
 			<div class="modal-action">
 				<button type="button" class="btn" data-on:click="$_showPreview = false">Close</button>
 			</div>
@@ -231,15 +466,41 @@ templ BrowserModals() {
 			<button type="button" data-on:click="$_showPreview = false">close</button>
 		</form>
 	</dialog>
-	<div class="toast toast-end" data-show="$_flash !== ''" style="display: none">
+	<div class="toast toast-end z-50" data-show="$_flash !== ''" style="display: none">
 		<div class="alert" data-class:alert-success="$_flashKind === 'ok'" data-class:alert-error="$_flashKind === 'bad'" data-on:click="$_flash = ''">
 			<span data-text="$_flash"></span>
 		</div>
 	</div>
+	@GalleryModal()
+}
+
+templ GalleryModal() {
+	<dialog id="gallery-modal" class="modal">
+		<div class="modal-box flex max-h-[92vh] max-w-6xl flex-col bg-base-300 p-0">
+			<div class="flex items-center justify-between gap-3 px-4 py-3">
+				<div class="min-w-0">
+					<h3 id="gallery-title" class="truncate text-sm font-semibold"></h3>
+					<p id="gallery-count" class="text-xs text-base-content/60"></p>
+				</div>
+				<button type="button" class="btn btn-sm btn-circle btn-ghost" id="gallery-close" aria-label="Close gallery">✕</button>
+			</div>
+			<div class="relative min-h-0 flex-1">
+				<div id="gallery-carousel" class="carousel h-full w-full"></div>
+				<button type="button" id="gallery-prev" class="btn btn-circle btn-neutral absolute left-3 top-1/2 -translate-y-1/2" aria-label="Previous">❮</button>
+				<button type="button" id="gallery-next" class="btn btn-circle btn-neutral absolute right-3 top-1/2 -translate-y-1/2" aria-label="Next">❯</button>
+			</div>
+		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button type="button" id="gallery-backdrop">close</button>
+		</form>
+	</dialog>
 }
 
 templ DropOverlay() {
-	<div id="drop-overlay" class="toast toast-center" hidden>
-		<div class="alert">Drop to upload directly to S3</div>
+	<div id="drop-overlay" class="toast toast-center z-50" hidden>
+		<div class="alert alert-info shadow-lg">
+			<svg xmlns="http://www.w3.org/2000/svg" class="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M12 12V4m0 0 4 4m-4-4L8 8"/></svg>
+			<span>Drop files or folders to upload</span>
+		</div>
 	</div>
 }

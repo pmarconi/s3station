@@ -44,6 +44,37 @@ func TestSanitizeName(t *testing.T) {
 	}
 }
 
+func TestSanitizeRelPath(t *testing.T) {
+	got, err := SanitizeRelPath("vacation/raw/cat.jpg")
+	if err != nil || got != "vacation/raw/cat.jpg" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+	if _, err := SanitizeRelPath("vacation/.station-trash/x"); err == nil {
+		t.Fatal("expected reserved error")
+	}
+	if _, err := SanitizeRelPath("../secret"); err == nil {
+		t.Fatal("expected invalid path")
+	}
+}
+
+func TestUserRootKeys(t *testing.T) {
+	if AbsUserKey(FilesPrefix, "") != "files/" {
+		t.Fatal(AbsUserKey(FilesPrefix, ""))
+	}
+	if AbsUserKey(FilesPrefix, "photos/cat.jpg") != "files/photos/cat.jpg" {
+		t.Fatal(AbsUserKey(FilesPrefix, "photos/cat.jpg"))
+	}
+	if AbsUserKey(FilesPrefix, "files/photos/cat.jpg") != "files/photos/cat.jpg" {
+		t.Fatal("abs should be idempotent")
+	}
+	if RelUserKey(FilesPrefix, "files/photos/cat.jpg") != "photos/cat.jpg" {
+		t.Fatal(RelUserKey(FilesPrefix, "files/photos/cat.jpg"))
+	}
+	if AbsUserKey(FilesPrefix, TrashPrefix+"x/a.jpg") != TrashPrefix+"x/a.jpg" {
+		t.Fatal("trash keys stay at bucket root")
+	}
+}
+
 func TestTrashKeys(t *testing.T) {
 	key := NewTrashKey("photos/cat.jpg")
 	if !IsTrashKey(key) {

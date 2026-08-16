@@ -2,6 +2,8 @@
 
 A small Nextcloud-style depot for an **existing AWS S3 bucket**.
 
+User files live under **`files/`** in the bucket (`FILES_PREFIX`). Trash and generated thumbs stay at `.station-trash/` and `.station-thumbs/`. Other features can use the same bucket without mixing with the depot.
+
 The browser talks to S3 with **presigned URLs**. Uploaded files never land on this server. Folder listings are cached in **Postgres**. Sessions live in **Redis**.
 
 ## What it does
