@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"image"
 	_ "image/png"
+	"math"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,15 +126,38 @@ func probeDuration(ctx context.Context, srcURL string) float64 {
 
 func frameTimes(duration float64, n int) []float64 {
 	out := make([]float64, n)
+	if n <= 0 {
+		return out
+	}
 	if duration <= 0 {
 		for i := 0; i < n; i++ {
-			out[i] = float64(i) + 0.25
+			out[i] = 0.2 + rand.Float64()*8
 		}
 		return out
 	}
-	for i := 0; i < n; i++ {
-		out[i] = duration * float64(i+1) / float64(n+1)
+
+	margin := math.Max(0.35, duration*0.08)
+	usable := duration - 2*margin
+	if usable < 0.25 {
+		margin = duration * 0.05
+		usable = duration - 2*margin
 	}
+	if usable <= 0 {
+		for i := 0; i < n; i++ {
+			out[i] = duration / 2
+		}
+		return out
+	}
+
+	// One random pick in each slice of the video, then shuffle so the
+	// card poster (first frame) is not always from the opening seconds.
+	bucket := usable / float64(n)
+	for i := 0; i < n; i++ {
+		out[i] = margin + float64(i)*bucket + rand.Float64()*bucket
+	}
+	rand.Shuffle(n, func(i, j int) {
+		out[i], out[j] = out[j], out[i]
+	})
 	return out
 }
 

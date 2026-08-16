@@ -13,11 +13,12 @@ templ Browser(user string, listing models.Listing, view string) {
 			data-attr:data-locked="$_locked"
 			data-attr:data-busy="$_busy"
 			data-signals={ InitialSignals(listing, view) }
-			data-on:station-upload-start__window="$_busy = true; $_flash = evt.detail.message; $_flashKind = 'ok'"
-			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
-			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
-			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
-			data-on:station-navigate__window="$_busy = true; $query = ''; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
+			data-on:station-upload-start__window="$_busy = true; $_uploadPct = -1; $_uploadName = ''; $_flash = evt.detail.message; $_flashKind = 'ok'"
+			data-on:station-upload-progress__window="$_uploadPct = evt.detail.pct; $_uploadName = evt.detail.name || $_uploadName"
+			data-on:station-uploaded__window="$_busy = false; $_uploadPct = -1; $_uploadName = ''; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+			data-on:station-upload-error__window="$_busy = false; $_uploadPct = -1; $_uploadName = ''; $_flash = evt.detail.message; $_flashKind = 'bad'"
+			data-on:station-moved__window="$_busy = false; $_uploadPct = -1; $_uploadName = ''; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+			data-on:station-navigate__window="$_busy = true; $query = ''; $selected = []; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
 			data-on:keydown__window="!$_busy && evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showMove = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
@@ -155,7 +156,30 @@ templ Toolbar(listing models.Listing) {
 			</div>
 		</div>
 		@MetaBar(listing)
+		@SelectionBar()
 	</section>
+}
+
+templ SelectionBar() {
+	<div id="selection-bar" class="mt-3 flex flex-wrap items-center gap-3 rounded-box bg-base-100 px-3 py-2 shadow-sm" data-show={ HasSelectedExpr } style="display: none">
+		<button type="button" class="btn btn-square btn-sm btn-primary" data-on:click={ ClearSelectedExpr } aria-label="Clear selection">
+			<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14"/></svg>
+		</button>
+		<span class="text-sm font-semibold"><span data-text={ SelectedCountExpr }></span> selected</span>
+		<button type="button" class="btn btn-ghost btn-sm text-primary" data-on:click={ SelectAllExpr }>Select all on this page</button>
+		<div class="ml-auto flex flex-wrap items-center gap-2">
+			<button type="button" class="btn btn-outline btn-sm" data-on:click={ DownloadSelectedExpr }>
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M12 12V4m0 8 4-4m-4 4L8 8"/></svg>
+				Download
+			</button>
+			<button type="button" class="btn btn-outline btn-sm" data-on:click={ MoveSelectedExpr }>Move to</button>
+			<button type="button" class="btn btn-error btn-sm" data-on:click={ TrashSelectedExpr }>
+				<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7h12M9 7V5h6v2m-8 0 1 12h8l1-12"/></svg>
+				Delete
+			</button>
+			<button type="button" class="btn btn-ghost btn-sm btn-square" data-on:click={ ClearSelectedExpr } aria-label="Close selection">✕</button>
+		</div>
+	</div>
 }
 
 templ Crumbs(prefix string) {
@@ -185,7 +209,7 @@ templ MetaBar(listing models.Listing) {
 }
 
 templ FilePanel(listing models.Listing, view string) {
-	<section id="file-panel" class={ "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6", templ.KV("is-list", view == "list") } data-class:is-list="$view === 'list'">
+	<section id="file-panel" class={ "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6", templ.KV("is-list", view == "list") } data-class:is-list="$view === 'list'" data-class:is-selecting={ HasSelectedExpr }>
 		if listing.Locked {
 			<div class="col-span-full">
 				<div class="hero rounded-box border border-base-300 bg-base-100 py-16">
@@ -230,6 +254,10 @@ templ FileCard(e models.Entry) {
 	<article
 		class="file-tile group"
 		data-show={ FilterExpr(e.Name) }
+		data-class:is-selected={ IsSelectedExpr(e.Key) }
+		if !e.Locked {
+			data-select-key={ e.Key }
+		}
 		if e.IsDir && !e.Locked {
 			draggable="true"
 			data-station-key={ e.Key }
@@ -245,6 +273,11 @@ templ FileCard(e models.Entry) {
 			data-gallery-kind={ string(e.Kind) }
 		}
 	>
+		if !e.Locked {
+			<button type="button" class="file-tile-check" data-on:click={ ToggleSelectExpr(e.Key) } aria-label={ "Select " + e.Name }>
+				<input type="checkbox" class="checkbox checkbox-sm checkbox-primary pointer-events-none" tabindex="-1" data-attr:checked={ IsSelectedExpr(e.Key) }/>
+			</button>
+		}
 		<div class="file-tile-preview relative aspect-square w-full">
 			if e.IsDir && !e.Locked {
 				<a href={ templ.SafeURL(FolderHref(e.Key)) } class="block h-full w-full cursor-pointer" data-on:click={ NavigateExpr(e.Key) } data-indicator:_busy>
@@ -389,8 +422,13 @@ templ BrowserModals() {
 	<dialog class="modal" data-attr:open="$_showMove">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Move to</h3>
-			<p class="py-2 text-base-content/70">Choose a folder for <strong data-text="$targetName"></strong>, then move it there.</p>
-			@MovePicker(models.Listing{}, "")
+			<p class="py-2 text-base-content/70">
+				Choose a folder for
+				<strong data-show="$targetKey !== ''" data-text="$targetName"></strong>
+				<strong data-show="$targetKey === ''">the selected items</strong>,
+				then move them there.
+			</p>
+			@MovePicker(models.Listing{}, []string{})
 			<div class="modal-action">
 				<button type="button" class="btn" data-on:click="$_showMove = false">Cancel</button>
 			</div>
@@ -477,7 +515,8 @@ templ BrowserModals() {
 	<dialog class="modal" data-attr:open="$_showDelete">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Move to trash</h3>
-			<p class="py-2 text-base-content/70">This removes <strong data-text="$targetName"></strong> from the depot. The object stays in the bucket under <code>.station-trash/</code> until you permanently delete it in Trash.</p>
+			<p class="py-2 text-base-content/70" data-show="$targetKey !== ''" style="display: none">This removes <strong data-text="$targetName"></strong> from the depot. The object stays in the bucket under <code>.station-trash/</code> until you permanently delete it in Trash.</p>
+			<p class="py-2 text-base-content/70" data-show="$targetKey === ''">This removes the selected items from the depot. The objects stay in the bucket under <code>.station-trash/</code> until you permanently delete them in Trash.</p>
 			<div class="modal-action">
 				<button type="button" class="btn" data-on:click="$_showDelete = false">Cancel</button>
 				<button type="button" class="btn btn-error" data-on:click="$_showDelete = false; @post('/files/trash')">Move to trash</button>
@@ -537,9 +576,9 @@ templ GalleryModal() {
 	</dialog>
 }
 
-templ MovePicker(dest models.Listing, targetKey string) {
+templ MovePicker(dest models.Listing, keys []string) {
 	<div id="move-picker" class="grid gap-3">
-		if targetKey == "" && dest.Prefix == "" && len(dest.Entries) == 0 && !dest.Locked {
+		if len(keys) == 0 && dest.Prefix == "" && len(dest.Entries) == 0 && !dest.Locked {
 			<p class="text-sm text-base-content/60">Loading folders…</p>
 		} else {
 			<div class="breadcrumbs py-0 text-sm">
@@ -559,7 +598,7 @@ templ MovePicker(dest models.Listing, targetKey string) {
 				<ul class="menu max-h-64 overflow-y-auto rounded-box bg-base-200 p-1">
 					for _, e := range dest.Entries {
 						<li>
-							if CanEnterPicker(targetKey, e) {
+							if CanEnterPicker(keys, e) {
 								<button type="button" data-on:click={ PickerNavExpr(e.Key) }>
 									<svg xmlns="http://www.w3.org/2000/svg" class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
 									{ e.Name }
@@ -574,7 +613,7 @@ templ MovePicker(dest models.Listing, targetKey string) {
 					}
 				</ul>
 			}
-			if MoveHereDisabled(targetKey, dest.Prefix, dest.Locked) {
+			if MoveHereDisabled(keys, dest.Prefix, dest.Locked) {
 				<button type="button" class="btn btn-primary btn-block" disabled>Move here</button>
 			} else {
 				<button type="button" class="btn btn-primary btn-block" data-on:click="$_busy = true; @post('/files/move')" data-indicator:_busy data-attr:disabled="$_busy">

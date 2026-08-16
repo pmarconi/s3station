@@ -23,6 +23,7 @@ var (
 	ErrExists      = errors.New("that name is already used")
 	ErrInvalidMove = errors.New("cannot move a folder into itself")
 	ErrNoThumb     = errors.New("thumbnails are only for images and videos")
+	ErrNoSelection = errors.New("nothing selected")
 )
 
 type Service struct {
@@ -44,6 +45,10 @@ func New(s3c *s3store.Client, c *cache.Store, lockStore *locks.Store, cfg config
 
 func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models.Listing, error) {
 	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil {
+		return models.Listing{}, err
+	}
+	prefix, err = s.resolvePrefix(ctx, prefix)
 	if err != nil {
 		return models.Listing{}, err
 	}
@@ -110,6 +115,54 @@ func (s *Service) List(ctx context.Context, prefix string, refresh bool) (models
 	return listing, nil
 }
 
+func (s *Service) resolvePrefix(ctx context.Context, prefix string) (string, error) {
+	prefix, err := storage.NormalizePrefix(prefix)
+	if err != nil || prefix == "" {
+		return prefix, err
+	}
+	parts := strings.Split(strings.Trim(prefix, "/"), "/")
+	cur := ""
+	for i, part := range parts {
+		entries, err := s.childEntries(ctx, cur)
+		if err != nil {
+			return "", err
+		}
+		if e, ok := storage.MatchFoldEntry(entries, part, true); ok {
+			cur = e.Key
+			if !strings.HasSuffix(cur, "/") {
+				cur += "/"
+			}
+			continue
+		}
+		rest := make([]string, 0, len(parts)-i)
+		for _, p := range parts[i:] {
+			p, err = storage.FolderName(p)
+			if err != nil {
+				return "", err
+			}
+			rest = append(rest, p)
+		}
+		return cur + strings.Join(rest, "/") + "/", nil
+	}
+	return cur, nil
+}
+
+func (s *Service) childEntries(ctx context.Context, prefix string) ([]models.Entry, error) {
+	if listing, ok, err := s.cache.Get(ctx, prefix); err != nil {
+		return nil, err
+	} else if ok {
+		return visibleEntries(listing.Entries), nil
+	}
+	entries, err := s.s3.List(ctx, s.abs(prefix))
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		entries[i].Key = s.rel(entries[i].Key)
+	}
+	return visibleEntries(entries), nil
+}
+
 func (s *Service) ListFolders(ctx context.Context, prefix string) (models.Listing, error) {
 	listing, err := s.List(ctx, prefix, false)
 	if err != nil {
@@ -136,12 +189,21 @@ func (s *Service) CreateFolder(ctx context.Context, prefix, name string) error {
 	if err := s.denyIfLocked(ctx, prefix); err != nil {
 		return err
 	}
-	name, err = storage.SanitizeName(name)
+	name, err = storage.FolderName(name)
 	if err != nil {
 		return err
 	}
 	if storage.IsReservedName(name) {
 		return storage.ErrReserved
+	}
+	prefix, err = s.resolvePrefix(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	if kids, err := s.childEntries(ctx, prefix); err != nil {
+		return err
+	} else if _, exists := storage.MatchFoldEntry(kids, name, true); exists {
+		return ErrExists
 	}
 	key := storage.JoinKey(prefix, name) + "/"
 	if err := s.s3.PutFolder(ctx, s.abs(key)); err != nil {
@@ -155,6 +217,18 @@ func (s *Service) CreateFolder(ctx context.Context, prefix, name string) error {
 	})
 }
 
+func (s *Service) MoveMany(ctx context.Context, keys []string, destPrefix string) error {
+	if len(keys) == 0 {
+		return ErrNoSelection
+	}
+	for _, key := range keys {
+		if err := s.Move(ctx, key, destPrefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 	src, err := storage.NormalizeObjectKey(srcKey)
 	if err != nil {
@@ -164,6 +238,10 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 		return err
 	}
 	destPrefix, err = storage.NormalizePrefix(destPrefix)
+	if err != nil {
+		return err
+	}
+	destPrefix, err = s.resolvePrefix(ctx, destPrefix)
 	if err != nil {
 		return err
 	}
@@ -184,7 +262,10 @@ func (s *Service) Move(ctx context.Context, srcKey, destPrefix string) error {
 		if destPrefix == src || strings.HasPrefix(destPrefix, src) {
 			return ErrInvalidMove
 		}
-		name := storage.BaseName(src)
+		name, err := storage.FolderName(storage.BaseName(src))
+		if err != nil {
+			return err
+		}
 		newPrefix := destPrefix + name + "/"
 		srcAbs := s.abs(src)
 		destAbs := s.abs(newPrefix)
@@ -254,7 +335,11 @@ func (s *Service) Rename(ctx context.Context, key, newName string) error {
 	if err := storage.GuardUserKey(src); err != nil {
 		return err
 	}
-	newName, err = storage.SanitizeName(newName)
+	if storage.IsFolderKey(src) {
+		newName, err = storage.FolderName(newName)
+	} else {
+		newName, err = storage.SanitizeName(newName)
+	}
 	if err != nil {
 		return err
 	}
@@ -271,7 +356,7 @@ func (s *Service) Rename(ctx context.Context, key, newName string) error {
 	if dest == src {
 		return nil
 	}
-	taken, err := s.destTaken(ctx, dest)
+	taken, err := s.destTaken(ctx, dest, src)
 	if err != nil {
 		return err
 	}
@@ -281,14 +366,22 @@ func (s *Service) Rename(ctx context.Context, key, newName string) error {
 	return s.relocate(ctx, src, dest)
 }
 
-func (s *Service) destTaken(ctx context.Context, dest string) (bool, error) {
+func (s *Service) destTaken(ctx context.Context, dest, ignore string) (bool, error) {
 	exists, err := s.s3.Exists(ctx, s.abs(dest))
 	if err != nil || exists {
 		return exists, err
 	}
 	if storage.IsFolderKey(dest) {
 		objs, err := s.s3.ListAll(ctx, s.abs(dest))
-		return len(objs) > 0, err
+		if err != nil || len(objs) > 0 {
+			return len(objs) > 0, err
+		}
+		kids, err := s.childEntries(ctx, storage.ParentPrefix(dest))
+		if err != nil {
+			return false, err
+		}
+		e, ok := storage.MatchFoldEntry(kids, storage.BaseName(dest), true)
+		return ok && e.Key != ignore, nil
 	}
 	return false, nil
 }
@@ -371,6 +464,18 @@ func (s *Service) uniqueKey(ctx context.Context, key string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("could not find a free name")
+}
+
+func (s *Service) TrashMany(ctx context.Context, keys []string) error {
+	if len(keys) == 0 {
+		return ErrNoSelection
+	}
+	for _, key := range keys {
+		if err := s.Trash(ctx, key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) Trash(ctx context.Context, key string) error {
@@ -615,7 +720,7 @@ func (s *Service) PresignUpload(ctx context.Context, prefix, name, contentType s
 	if err := s.denyIfLocked(ctx, prefix); err != nil {
 		return models.Presign{}, err
 	}
-	name, err = storage.SanitizeRelPath(name)
+	name, err = storage.SanitizeUploadPath(name)
 	if err != nil {
 		return models.Presign{}, err
 	}
@@ -641,7 +746,7 @@ func (s *Service) CompleteUploads(ctx context.Context, prefix string, keys, fold
 		return err
 	}
 	for _, rel := range folders {
-		rel, err := storage.SanitizeRelPath(rel)
+		rel, err := storage.SanitizeFolderRelPath(rel)
 		if err != nil {
 			return err
 		}
@@ -665,7 +770,7 @@ func (s *Service) CompleteUploads(ctx context.Context, prefix string, keys, fold
 		if err := s.denyIfLocked(ctx, logical); err != nil {
 			return err
 		}
-		entry, err := s.s3.Head(ctx, s.abs(logical))
+		entry, err := s.s3.Stat(ctx, s.abs(logical))
 		if err != nil {
 			return fmt.Errorf("head %s: %w", logical, err)
 		}
@@ -920,17 +1025,33 @@ func (s *Service) attachURLs(ctx context.Context, entries []models.Entry) error 
 
 func (s *Service) enrichKind(ctx context.Context, e *models.Entry) error {
 	e.Kind = storage.ResolveKind(e.Name, e.ContentType, e.IsDir)
-	if e.Kind != models.KindFile && e.ContentType != "" && e.ContentType != "application/octet-stream" {
+	needHead := e.ContentType == "" || e.ContentType == "application/octet-stream" || e.Kind == models.KindFile || (!e.IsDir && e.Size <= 0)
+	if !needHead {
 		return nil
 	}
-	headed, err := s.s3.Head(ctx, s.abs(e.Key))
+	headed, err := s.s3.Stat(ctx, s.abs(e.Key))
 	if err != nil {
 		return nil
 	}
-	e.ContentType = headed.ContentType
-	e.Kind = headed.Kind
+	applyHead(e, headed)
 	_ = s.cache.UpsertObject(ctx, storage.ParentPrefix(e.Key), *e)
 	return nil
+}
+
+func applyHead(e *models.Entry, headed models.Entry) {
+	if headed.ContentType != "" {
+		e.ContentType = headed.ContentType
+	}
+	if headed.Size > 0 {
+		e.Size = headed.Size
+	}
+	if headed.ETag != "" {
+		e.ETag = headed.ETag
+	}
+	if !headed.LastModified.IsZero() {
+		e.LastModified = headed.LastModified
+	}
+	e.Kind = storage.ResolveKind(e.Name, e.ContentType, e.IsDir)
 }
 
 func Breadcrumbs(prefix string) []models.Crumb {

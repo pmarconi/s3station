@@ -36,7 +36,10 @@ func InitialSignals(listing models.Listing, view string) string {
 		"query":            "",
 		"refresh":          false,
 		"nav":              false,
+		"selected":         []string{},
 		"_busy":            false,
+		"_uploadPct":       -1,
+		"_uploadName":      "",
 		"_flash":           "",
 		"_flashKind":       "ok",
 		"_showNewFolder":   false,
@@ -87,7 +90,25 @@ func FolderHref(prefix string) string {
 }
 
 func NavigateExpr(prefix string) string {
-	return fmt.Sprintf("if(evt.metaKey||evt.ctrlKey||evt.shiftKey||evt.altKey) return; evt.preventDefault(); $_busy = true; $query = ''; $prefix = %s; $refresh = false; $nav = true; @get('/files')", jsString(prefix))
+	return fmt.Sprintf("if(evt.metaKey||evt.ctrlKey||evt.shiftKey||evt.altKey) return; evt.preventDefault(); $_busy = true; $query = ''; $selected = []; $prefix = %s; $refresh = false; $nav = true; @get('/files')", jsString(prefix))
+}
+
+const (
+	HasSelectedExpr      = `($selected || []).length > 0`
+	SelectedCountExpr    = `($selected || []).length`
+	ClearSelectedExpr    = `$selected = []`
+	SelectAllExpr        = `$selected = [...document.querySelectorAll('#file-panel [data-select-key]')].filter(el => el.offsetParent !== null).map(el => el.getAttribute('data-select-key'))`
+	DownloadSelectedExpr = `const ks=$selected||[]; if(!ks.length) return; window.location='/files/archive?'+ks.map(k=>'key='+encodeURIComponent(k)).join('&')`
+	TrashSelectedExpr    = `$targetKey = ''; $targetName = ''; $_showDelete = true`
+	MoveSelectedExpr     = `$targetKey = ''; $targetName = ''; $destPrefix = $prefix; $_showMove = true; @get('/folders/picker')`
+)
+
+func IsSelectedExpr(key string) string {
+	return fmt.Sprintf("($selected || []).includes(%s)", jsString(key))
+}
+
+func ToggleSelectExpr(key string) string {
+	return fmt.Sprintf("evt.preventDefault(); evt.stopPropagation(); const k=%s; const i=($selected||[]).indexOf(k); $selected = i<0 ? [...($selected||[]), k] : $selected.filter(x => x!==k)", jsString(key))
 }
 
 func UnlockExpr(e models.Entry) string {
@@ -153,12 +174,28 @@ func PickerNavExpr(prefix string) string {
 	return fmt.Sprintf("$destPrefix = %s; @get('/folders/picker')", jsString(prefix))
 }
 
-func MoveHereDisabled(targetKey, destPrefix string, locked bool) bool {
-	return locked || storage.InvalidMoveDest(targetKey, destPrefix)
+func MoveHereDisabled(keys []string, destPrefix string, locked bool) bool {
+	if locked || len(keys) == 0 {
+		return true
+	}
+	for _, key := range keys {
+		if storage.InvalidMoveDest(key, destPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
-func CanEnterPicker(targetKey string, e models.Entry) bool {
-	return e.IsDir && !e.Locked && !storage.InvalidMoveDest(targetKey, e.Key)
+func CanEnterPicker(keys []string, e models.Entry) bool {
+	if !e.IsDir || e.Locked {
+		return false
+	}
+	for _, key := range keys {
+		if storage.InvalidMoveDest(key, e.Key) {
+			return false
+		}
+	}
+	return true
 }
 
 func PurgeExpr(item models.TrashItem) string {

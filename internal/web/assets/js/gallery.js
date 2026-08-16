@@ -320,7 +320,7 @@
       goTo(index + 1, true);
       return;
     }
-    if (event.target.closest(".file-tile-actions, .card-actions, .dropdown")) return;
+    if (event.target.closest(".file-tile-actions, .file-tile-check, .card-actions, .dropdown")) return;
     const card = event.target.closest("#file-panel [data-gallery-src], #trash-panel [data-gallery-src]");
     if (!card) return;
     event.preventDefault();

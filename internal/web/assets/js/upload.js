@@ -93,6 +93,35 @@
     );
   }
 
+  function putFile(url, method, headers, file, onProgress) {
+    return new Promise(function (resolve, reject) {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method || "PUT", url);
+      Object.keys(headers || {}).forEach(function (key) {
+        xhr.setRequestHeader(key, headers[key]);
+      });
+      xhr.upload.onprogress = function (event) {
+        if (!onProgress) return;
+        const total = event.total || file.size || 0;
+        onProgress(event.loaded || 0, total);
+      };
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+          return;
+        }
+        reject(new Error("S3 rejected " + (file.name || "file") + " (" + xhr.status + ")"));
+      };
+      xhr.onerror = function () {
+        reject(new Error("Upload failed"));
+      };
+      xhr.onabort = function () {
+        reject(new Error("Upload cancelled"));
+      };
+      xhr.send(file);
+    });
+  }
+
   function hasFileItems(dataTransfer) {
     if (!dataTransfer) return false;
     if (dataTransfer.items && dataTransfer.items.length) {
@@ -126,14 +155,45 @@
 
     const keys = [];
     const dest = prefix();
+    const totalBytes = files.reduce(function (sum, item) {
+      return sum + (item.file && item.file.size ? item.file.size : 0);
+    }, 0);
+    let completedBytes = 0;
+    let lastPct = -1;
+    let lastAt = 0;
+
+    function progressLabel(index, name) {
+      if (files.length > 1) {
+        return index + "/" + files.length + " · " + name;
+      }
+      return name;
+    }
+
+    function reportProgress(pct, name, index) {
+      pct = Math.max(0, Math.min(100, pct));
+      const now = Date.now();
+      if (pct !== 100 && pct === lastPct && now - lastAt < 80) {
+        return;
+      }
+      lastPct = pct;
+      lastAt = now;
+      emit("station-upload-progress", {
+        pct: pct,
+        name: progressLabel(index, name),
+      });
+    }
+
     try {
       for (let i = 0; i < files.length; i++) {
         const item = files[i];
         const file = item.file;
         const name = item.relativePath || file.name;
-        emit("station-upload-start", {
-          message: "Uploading " + (i + 1) + "/" + files.length + " · " + name,
-        });
+        const index = i + 1;
+        if (totalBytes > 0) {
+          reportProgress(Math.round((completedBytes / totalBytes) * 100), name, index);
+        } else {
+          reportProgress(Math.round((i / files.length) * 100), name, index);
+        }
 
         const presignRes = await fetch("/uploads/presign", {
           method: "POST",
@@ -151,13 +211,20 @@
         }
 
         const spec = await presignRes.json();
-        const putRes = await fetch(spec.url, {
-          method: spec.method || "PUT",
-          headers: spec.headers || {},
-          body: file,
+        await putFile(spec.url, spec.method, spec.headers, file, function (loaded, total) {
+          if (totalBytes > 0) {
+            reportProgress(Math.round(((completedBytes + loaded) / totalBytes) * 100), name, index);
+            return;
+          }
+          if (total > 0) {
+            reportProgress(Math.round((loaded / total) * 100), name, index);
+          }
         });
-        if (!putRes.ok) {
-          throw new Error("S3 rejected " + name + " (" + putRes.status + ")");
+        completedBytes += file.size || 0;
+        if (totalBytes > 0) {
+          reportProgress(Math.round((completedBytes / totalBytes) * 100), name, index);
+        } else {
+          reportProgress(Math.round((index / files.length) * 100), name, index);
         }
         keys.push(spec.key);
       }

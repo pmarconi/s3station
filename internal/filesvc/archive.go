@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"station/internal/locks"
 	"station/internal/s3store"
@@ -18,6 +20,17 @@ type FolderArchive struct {
 	Prefix   string
 	Root     string
 	Objects  []s3store.Object
+}
+
+type ZipItem struct {
+	Key      string
+	Name     string
+	Modified time.Time
+}
+
+type SelectionArchive struct {
+	Filename string
+	Items    []ZipItem
 }
 
 func (s *Service) PrepareFolderArchive(ctx context.Context, prefix string) (FolderArchive, error) {
@@ -65,36 +78,142 @@ func (s *Service) PrepareFolderArchive(ctx context.Context, prefix string) (Fold
 }
 
 func (s *Service) WriteFolderArchive(ctx context.Context, arch FolderArchive, w io.Writer) error {
-	zw := zip.NewWriter(w)
-
+	items := make([]ZipItem, 0, len(arch.Objects))
 	for _, obj := range arch.Objects {
 		name, ok := archiveRelPath(arch.Root, arch.Prefix, obj.Key)
 		if !ok {
 			continue
 		}
+		items = append(items, ZipItem{Key: obj.Key, Name: name, Modified: obj.LastModified})
+	}
+	return s.writeZip(ctx, items, w)
+}
+
+func (s *Service) PrepareSelectionArchive(ctx context.Context, keys []string) (SelectionArchive, error) {
+	seen := map[string]struct{}{}
+	clean := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key, err := storage.NormalizeObjectKey(key)
+		if err != nil {
+			return SelectionArchive{}, err
+		}
+		if err := storage.GuardUserKey(key); err != nil {
+			return SelectionArchive{}, err
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		clean = append(clean, key)
+	}
+	if len(clean) == 0 {
+		return SelectionArchive{}, ErrNoSelection
+	}
+
+	used := map[string]int{}
+	items := make([]ZipItem, 0)
+	for _, key := range clean {
+		if err := s.denyIfLocked(ctx, key); err != nil {
+			return SelectionArchive{}, err
+		}
+		if storage.IsFolderKey(key) {
+			folderItems, err := s.folderZipItems(ctx, key, used)
+			if err != nil {
+				return SelectionArchive{}, err
+			}
+			items = append(items, folderItems...)
+			continue
+		}
+		ent, err := s.s3.Head(ctx, s.abs(key))
+		if err != nil {
+			return SelectionArchive{}, err
+		}
+		items = append(items, ZipItem{
+			Key:      s.abs(key),
+			Name:     uniqueZipName(used, storage.BaseName(key)),
+			Modified: ent.LastModified,
+		})
+	}
+	if len(items) == 0 {
+		return SelectionArchive{}, ErrNoSelection
+	}
+	filename := "download.zip"
+	if len(clean) == 1 {
+		filename = storage.BaseName(clean[0]) + ".zip"
+	}
+	return SelectionArchive{Filename: filename, Items: items}, nil
+}
+
+func (s *Service) folderZipItems(ctx context.Context, prefix string, used map[string]int) ([]ZipItem, error) {
+	s3prefix := s.abs(prefix)
+	objs, err := s.s3.ListAll(ctx, s3prefix)
+	if err != nil {
+		return nil, err
+	}
+	blocked, err := s.lockedNested(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	root := storage.BaseName(prefix)
+	if root == "" {
+		root = "folder"
+	}
+	root = uniqueZipName(used, root)
+	items := make([]ZipItem, 0, len(objs))
+	for _, obj := range objs {
+		name, ok := archiveRelPath(root, s3prefix, obj.Key)
+		if !ok || underLocked(s.rel(obj.Key), blocked) {
+			continue
+		}
+		items = append(items, ZipItem{Key: obj.Key, Name: name, Modified: obj.LastModified})
+	}
+	return items, nil
+}
+
+func (s *Service) WriteSelectionArchive(ctx context.Context, arch SelectionArchive, w io.Writer) error {
+	return s.writeZip(ctx, arch.Items, w)
+}
+
+func (s *Service) writeZip(ctx context.Context, items []ZipItem, w io.Writer) error {
+	zw := zip.NewWriter(w)
+	for _, item := range items {
+		if item.Name == "" || strings.Contains(item.Name, "..") {
+			continue
+		}
 		hdr := &zip.FileHeader{
-			Name:     name,
+			Name:     item.Name,
 			Method:   zip.Deflate,
-			Modified: obj.LastModified,
+			Modified: item.Modified,
 		}
 		fw, err := zw.CreateHeader(hdr)
 		if err != nil {
 			return fmt.Errorf("zip entry: %w", err)
 		}
-		body, _, err := s.s3.Open(ctx, obj.Key)
+		body, _, err := s.s3.Open(ctx, item.Key)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", obj.Key, err)
+			return fmt.Errorf("read %s: %w", item.Key, err)
 		}
 		_, copyErr := io.Copy(fw, body)
 		_ = body.Close()
 		if copyErr != nil {
-			return fmt.Errorf("copy %s: %w", obj.Key, copyErr)
+			return fmt.Errorf("copy %s: %w", item.Key, copyErr)
 		}
 		if err := zw.Flush(); err != nil {
 			return err
 		}
 	}
 	return zw.Close()
+}
+
+func uniqueZipName(used map[string]int, name string) string {
+	n := used[name]
+	used[name]++
+	if n == 0 {
+		return name
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	return fmt.Sprintf("%s (%d)%s", base, n+1, ext)
 }
 
 func (s *Service) lockedNested(ctx context.Context, prefix string) ([]string, error) {

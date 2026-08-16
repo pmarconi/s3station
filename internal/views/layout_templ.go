@@ -29,7 +29,7 @@ func BusyOverlay() templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<dialog id=\"page-busy\" class=\"modal\"><div class=\"modal-box flex max-w-xs flex-col items-center gap-3\"><span class=\"loading loading-spinner loading-lg text-primary\"></span> <span class=\"text-sm text-base-content/70\">Working…</span></div></dialog>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<dialog id=\"page-busy\" class=\"modal\"><div class=\"modal-box flex max-w-sm flex-col items-center gap-3\"><span class=\"loading loading-spinner loading-lg text-primary\"></span> <span class=\"text-sm text-base-content/70\" data-show=\"$_uploadPct < 0\">Working…</span><div class=\"grid w-full gap-2\" data-show=\"$_uploadPct >= 0\" style=\"display: none\"><p class=\"truncate text-center text-sm\" data-text=\"$_uploadName\"></p><progress class=\"progress progress-primary w-full\" data-attr:value=\"$_uploadPct\" max=\"100\"></progress><p class=\"text-center text-lg font-semibold tabular-nums\" data-text=\"$_uploadPct + '%'\"></p></div></div></dialog>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -65,7 +65,7 @@ func Layout(title string) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 18, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/views/layout.templ`, Line: 23, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {

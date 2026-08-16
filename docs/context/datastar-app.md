@@ -15,9 +15,9 @@ Datastar SSE patches (same page, morph/replace fragments):
 | `@get('/files')` | `listFiles` (Datastar `GET /files`) | `#file-panel`, `#crumbs`, `#meta-bar` + signals + folder URL (`pushState` when `$nav`) |
 | `@post('/folders')` | `createFolder` | same as listing |
 | `@post('/folders/unlock'\|'protect'\|'unprotect')` | lock handlers | same as listing |
-| `@post('/files/trash')` | `trash` | listing |
+| `@post('/files/trash')` | `trash` | listing (one `$targetKey` or `$selected`) |
 | `@get('/folders/picker')` | `folderPicker` | `#move-picker` |
-| `@post('/files/move')` | `moveFromSignals` | listing |
+| `@post('/files/move')` | `moveFromSignals` | listing (one `$targetKey` or `$selected`) |
 | `@post('/cache/purge')` | `purgeCache` | flash only |
 | `@post('/trash/restore'\|'purge'\|'empty')` | trash handlers | `#trash-panel` + signals |
 | `@post('/thumbs/purge')` | `purgeThumbs` | flash |
@@ -29,8 +29,10 @@ Depot objects are stored under `files/` in the bucket (`FILES_PREFIX`). The brow
 Do **not** use `@get` / `@post` for binary or JSON APIs:
 
 - `GET /folders/archive` — zip stream (`<a href>`)
+- `GET /files/archive?key=&key=` — zip of the current selection (`window.location`, not `@get`)
 - `GET /thumbs/*` — image bytes
 - `POST /uploads/presign`, `POST /uploads/complete` — `fetch` + JSON from `upload.js`
+- S3 `PUT` of the file uses `XMLHttpRequest` (not `fetch`) so `upload.onprogress` can update `$_uploadPct`
 - Drag-drop `POST /files/move` is also `fetch` + JSON. The Move to modal uses Datastar `@post('/files/move')`.
 
 If `Datastar-Request: true` and the session is dead, redirect with `sse.Redirect("/login")`, not `http.Redirect`.
@@ -39,9 +41,9 @@ If `Datastar-Request: true` and the session is dead, redirect with `sse.Redirect
 
 Initialized once on the page root with `data-signals={ InitialSignals(...) }` in `internal/views/helpers.go`.
 
-Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `destPrefix`, `folderPassword`, `view`, `refresh`, `nav`. `$nav` is true only for in-page folder clicks (history `pushState`); reloads and mutations `replaceState` the same path. Grid/list `$view` is stored in Redis per username (`prefs:{user}`) and seeded on page load.
+Backend reads a subset via `datastar.ReadSignals` into `web.Signals`: `prefix`, `newFolderName`, `targetKey`, `targetBatch`, `destPrefix`, `folderPassword`, `view`, `refresh`, `nav`, `selected`. `$selected` is a **string array** of object keys (not a map). Datastar flattens object keys on `.`, so `vacation.mp4` as a map key becomes nested JSON and `ReadSignals` fails. Per-item ⋮ actions set `$targetKey`; the selection bar leaves it empty so trash/move use the selected keys. `$nav` is true only for in-page folder clicks (history `pushState`); reloads and mutations `replaceState` the same path. Grid/list `$view` is stored in Redis per username (`prefs:{user}`) and seeded on page load. `$selected` is cleared on folder navigation and after listing patches.
 
-The rest is frontend-only. Names starting with `_` are UI state (`_busy`, `_flash`, `_showDelete`, `_locked`, …).
+The rest is frontend-only. Names starting with `_` are UI state (`_busy`, `_flash`, `_showDelete`, `_locked`, `_uploadPct`, `_uploadName`, …). `_uploadPct` is `-1` when idle; during an S3 PUT it is `0`–`100` and the busy overlay shows the bar.
 
 Keep new signals in `InitialSignals` **and** reset them in `patchListing` / `patchTrash` / `flash` when the action should close a modal or clear busy/flash.
 
@@ -83,7 +85,8 @@ The patched root must keep a stable `id` (`#file-panel`, `#trash-panel`, `#crumb
 `upload.js` / `gallery.js` dispatch `CustomEvent`s. Datastar listens on the drawer root:
 
 ```
-data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
+data-on:station-upload-progress__window="$_uploadPct = evt.detail.pct; $_uploadName = evt.detail.name || $_uploadName"
+data-on:station-uploaded__window="$_busy = false; $_uploadPct = -1; $_uploadName = ''; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 ```
 
 After a successful upload or internal move, refresh the listing with `@get('/files')`. Do not try to patch the grid from those scripts.

@@ -2,6 +2,22 @@ package filesvc
 
 import "testing"
 
+func TestUniqueZipName(t *testing.T) {
+	used := map[string]int{}
+	if got := uniqueZipName(used, "cat.jpg"); got != "cat.jpg" {
+		t.Fatalf("first = %q", got)
+	}
+	if got := uniqueZipName(used, "cat.jpg"); got != "cat (2).jpg" {
+		t.Fatalf("second = %q", got)
+	}
+	if got := uniqueZipName(used, "album"); got != "album" {
+		t.Fatalf("folder = %q", got)
+	}
+	if got := uniqueZipName(used, "album"); got != "album (2)" {
+		t.Fatalf("folder clash = %q", got)
+	}
+}
+
 func TestArchiveRelPath(t *testing.T) {
 	tests := []struct {
 		root, prefix, key string

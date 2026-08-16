@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,6 +77,10 @@ func (s *Server) browser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("list", "err", err)
 		http.Error(w, publicError(err), http.StatusBadRequest)
+		return
+	}
+	if listing.Prefix != prefix {
+		http.Redirect(w, r, storage.PublicFolderPath(listing.Prefix), http.StatusMovedPermanently)
 		return
 	}
 	_ = views.Browser(currentUser(r), listing, s.uiView(r)).Render(r.Context(), w)
@@ -150,6 +155,26 @@ func (s *Server) folderArchive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	if err := s.files.WriteFolderArchive(r.Context(), arch, w); err != nil {
 		s.log.Error("write folder archive", "prefix", arch.Prefix, "err", err)
+	}
+}
+
+func (s *Server) selectionArchive(w http.ResponseWriter, r *http.Request) {
+	arch, err := s.files.PrepareSelectionArchive(r.Context(), r.URL.Query()["key"])
+	if err != nil {
+		s.log.Error("selection archive", "err", err)
+		status := http.StatusBadRequest
+		if errors.Is(err, locks.ErrLocked) {
+			status = http.StatusForbidden
+		}
+		http.Error(w, publicError(err), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", filesvc.AttachmentDisposition(arch.Filename))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	if err := s.files.WriteSelectionArchive(r.Context(), arch, w); err != nil {
+		s.log.Error("write selection archive", "err", err)
 	}
 }
 
@@ -252,7 +277,7 @@ func (s *Server) folderPicker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sse := datastar.NewSSE(w, r)
-	_ = sse.PatchElementTempl(views.MovePicker(listing, sig.TargetKey), datastar.WithSelector("#move-picker"), datastar.WithModeReplace())
+	_ = sse.PatchElementTempl(views.MovePicker(listing, actionKeys(sig)), datastar.WithSelector("#move-picker"), datastar.WithModeReplace())
 }
 
 func (s *Server) move(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +307,8 @@ func (s *Server) moveFromSignals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad signals", http.StatusBadRequest)
 		return
 	}
-	if err := s.files.Move(r.Context(), sig.TargetKey, sig.DestPrefix); err != nil {
+	keys := actionKeys(sig)
+	if err := s.files.MoveMany(r.Context(), keys, sig.DestPrefix); err != nil {
 		s.log.Error("move", "err", err)
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
@@ -292,7 +318,11 @@ func (s *Server) moveFromSignals(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Moved.", sig.Prefix, false)
+	msg := "Moved."
+	if len(keys) > 1 {
+		msg = fmt.Sprintf("Moved %d items.", len(keys))
+	}
+	s.patchListing(w, r, listing, msg, sig.Prefix, false)
 }
 
 func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +350,8 @@ func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad signals", http.StatusBadRequest)
 		return
 	}
-	if err := s.files.Trash(r.Context(), sig.TargetKey); err != nil {
+	keys := actionKeys(sig)
+	if err := s.files.TrashMany(r.Context(), keys); err != nil {
 		s.log.Error("trash", "err", err)
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
@@ -330,7 +361,11 @@ func (s *Server) trash(w http.ResponseWriter, r *http.Request) {
 		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
 		return
 	}
-	s.patchListing(w, r, listing, "Moved to trash. Permanent delete is in Settings.", sig.Prefix, false)
+	msg := "Moved to trash. Permanent delete is in Settings."
+	if len(keys) > 1 {
+		msg = fmt.Sprintf("Moved %d items to trash. Permanent delete is in Settings.", len(keys))
+	}
+	s.patchListing(w, r, listing, msg, sig.Prefix, false)
 }
 
 func (s *Server) purgeCache(w http.ResponseWriter, r *http.Request) {
@@ -506,4 +541,29 @@ func (s *Server) thumb(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+func selectedKeys(keys []string) []string {
+	out := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func actionKeys(sig Signals) []string {
+	if key := strings.TrimSpace(sig.TargetKey); key != "" {
+		return []string{key}
+	}
+	return selectedKeys(sig.Selected)
 }

@@ -3,6 +3,8 @@ package storage
 import (
 	"strings"
 	"testing"
+
+	"station/internal/models"
 )
 
 func TestNormalizePrefix(t *testing.T) {
@@ -30,6 +32,45 @@ func TestNormalizePrefix(t *testing.T) {
 		if tc.ok && got != tc.want {
 			t.Fatalf("NormalizePrefix(%q)=%q want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestFolderName(t *testing.T) {
+	got, err := FolderName("  Videos  ")
+	if err != nil || got != "videos" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+	if _, err := FolderName(".."); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSanitizeUploadPath(t *testing.T) {
+	got, err := SanitizeUploadPath("Vacation/Raw/Cat.JPG")
+	if err != nil || got != "vacation/raw/Cat.JPG" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+	got, err = SanitizeFolderRelPath("Vacation/Raw")
+	if err != nil || got != "vacation/raw" {
+		t.Fatalf("folder rel %q err %v", got, err)
+	}
+}
+
+func TestMatchFoldEntry(t *testing.T) {
+	entries := []models.Entry{
+		{Key: "Videos/", Name: "Videos", IsDir: true},
+		{Key: "clip.mp4", Name: "clip.mp4"},
+	}
+	e, ok := MatchFoldEntry(entries, "videos", true)
+	if !ok || e.Key != "Videos/" {
+		t.Fatalf("fold %v %v", e, ok)
+	}
+	e, ok = MatchFoldEntry(entries, "Videos", true)
+	if !ok || e.Name != "Videos" {
+		t.Fatalf("exact %v %v", e, ok)
+	}
+	if _, ok := MatchFoldEntry(entries, "clip.mp4", true); ok {
+		t.Fatal("file should be ignored when dirsOnly")
 	}
 }
 

@@ -122,10 +122,14 @@ func (s *Store) UpsertObject(ctx context.Context, prefix string, entry models.En
 		ON CONFLICT (prefix, key) DO UPDATE SET
 			name = EXCLUDED.name,
 			is_dir = EXCLUDED.is_dir,
-			size = EXCLUDED.size,
-			etag = EXCLUDED.etag,
-			content_type = EXCLUDED.content_type,
-			last_modified = EXCLUDED.last_modified
+			size = CASE
+				WHEN EXCLUDED.size > 0 THEN EXCLUDED.size
+				WHEN EXCLUDED.is_dir THEN 0
+				ELSE cached_objects.size
+			END,
+			etag = COALESCE(NULLIF(EXCLUDED.etag, ''), cached_objects.etag),
+			content_type = COALESCE(NULLIF(EXCLUDED.content_type, ''), cached_objects.content_type),
+			last_modified = COALESCE(EXCLUDED.last_modified, cached_objects.last_modified)
 	`, prefix, entry.Key, entry.Name, entry.IsDir, entry.Size, entry.ETag, entry.ContentType, lastMod)
 	return err
 }

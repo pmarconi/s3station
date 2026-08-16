@@ -2,9 +2,14 @@ package views
 
 templ BusyOverlay() {
 	<dialog id="page-busy" class="modal">
-		<div class="modal-box flex max-w-xs flex-col items-center gap-3">
+		<div class="modal-box flex max-w-sm flex-col items-center gap-3">
 			<span class="loading loading-spinner loading-lg text-primary"></span>
-			<span class="text-sm text-base-content/70">Working…</span>
+			<span class="text-sm text-base-content/70" data-show="$_uploadPct < 0">Working…</span>
+			<div class="grid w-full gap-2" data-show="$_uploadPct >= 0" style="display: none">
+				<p class="truncate text-center text-sm" data-text="$_uploadName"></p>
+				<progress class="progress progress-primary w-full" data-attr:value="$_uploadPct" max="100"></progress>
+				<p class="text-center text-lg font-semibold tabular-nums" data-text="$_uploadPct + '%'"></p>
+			</div>
 		</div>
 	</dialog>
 }

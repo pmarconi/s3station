@@ -23,16 +23,17 @@ import (
 )
 
 type Signals struct {
-	Prefix         string `json:"prefix"`
-	NewFolderName  string `json:"newFolderName"`
-	TargetKey      string `json:"targetKey"`
-	TargetBatch    string `json:"targetBatch"`
-	DestPrefix     string `json:"destPrefix"`
-	FolderPassword string `json:"folderPassword"`
-	RenameTo       string `json:"renameTo"`
-	View           string `json:"view"`
-	Refresh        bool   `json:"refresh"`
-	Nav            bool   `json:"nav"`
+	Prefix         string   `json:"prefix"`
+	NewFolderName  string   `json:"newFolderName"`
+	TargetKey      string   `json:"targetKey"`
+	TargetBatch    string   `json:"targetBatch"`
+	DestPrefix     string   `json:"destPrefix"`
+	FolderPassword string   `json:"folderPassword"`
+	RenameTo       string   `json:"renameTo"`
+	View           string   `json:"view"`
+	Refresh        bool     `json:"refresh"`
+	Nav            bool     `json:"nav"`
+	Selected       []string `json:"selected"`
 }
 
 type Server struct {
@@ -76,6 +77,7 @@ func New(cfg config.Config, sessions *session.Store, files *filesvc.Service, log
 		r.Post("/prefs", s.savePrefs)
 		r.Get("/folders/picker", s.folderPicker)
 		r.Get("/folders/archive", s.folderArchive)
+		r.Get("/files/archive", s.selectionArchive)
 		r.Post("/files/trash", s.trash)
 		r.Post("/files/move", s.move)
 		r.Post("/files/rename", s.rename)
@@ -175,6 +177,7 @@ func (s *Server) checkCreds(user, pass string) bool {
 func (s *Server) readSignals(r *http.Request) (Signals, error) {
 	var sig Signals
 	if err := datastar.ReadSignals(r, &sig); err != nil {
+		s.log.Error("read signals", "err", err)
 		return sig, err
 	}
 	return sig, nil
@@ -202,10 +205,12 @@ func (s *Server) savePrefs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) flash(sse *datastar.ServerSentEventGenerator, kind, msg string) {
 	_ = sse.MarshalAndPatchSignals(map[string]any{
-		"_flash":     msg,
-		"_flashKind": kind,
-		"_busy":      false,
-		"refresh":    false,
+		"_flash":      msg,
+		"_flashKind":  kind,
+		"_busy":       false,
+		"_uploadPct":  -1,
+		"_uploadName": "",
+		"refresh":     false,
 	})
 }
 
@@ -224,6 +229,7 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 		"destPrefix":     "",
 		"targetKey":      "",
 		"targetName":     "",
+		"selected":       []string{},
 		"_showNewFolder": false,
 		"_showRename":    false,
 		"_showDelete":    false,
@@ -234,6 +240,8 @@ func (s *Server) patchListing(w http.ResponseWriter, r *http.Request, listing mo
 		"_locked":        listing.Locked,
 		"_protected":     listing.Protected,
 		"_busy":          false,
+		"_uploadPct":     -1,
+		"_uploadName":    "",
 		"_flash":         msg,
 		"_flashKind":     "ok",
 	}
@@ -267,6 +275,8 @@ func publicError(err error) string {
 		return "That name is already used here."
 	case errors.Is(err, filesvc.ErrInvalidMove):
 		return "Can't move a folder into itself."
+	case errors.Is(err, filesvc.ErrNoSelection):
+		return "Select at least one item first."
 	case errors.Is(err, filesvc.ErrNoThumb):
 		return "Thumbnails are only for images and videos."
 	case errors.Is(err, thumbs.ErrNoFFmpeg):

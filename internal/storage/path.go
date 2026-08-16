@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"station/internal/models"
 )
 
 const (
@@ -51,6 +53,18 @@ func NormalizePrefix(p string) (string, error) {
 		return "", nil
 	}
 	return strings.Join(clean, "/") + "/", nil
+}
+
+func FolderName(name string) (string, error) {
+	name, err := SanitizeName(name)
+	if err != nil {
+		return "", err
+	}
+	name = strings.ToLower(name)
+	if name == "" || name == "." || name == ".." {
+		return "", ErrInvalidPath
+	}
+	return name, nil
 }
 
 func SanitizeName(name string) (string, error) {
@@ -97,6 +111,47 @@ func SanitizeRelPath(name string) (string, error) {
 		clean = append(clean, part)
 	}
 	return strings.Join(clean, "/"), nil
+}
+
+func SanitizeFolderRelPath(name string) (string, error) {
+	name, err := SanitizeRelPath(name)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(name), nil
+}
+
+func SanitizeUploadPath(name string) (string, error) {
+	name, err := SanitizeRelPath(name)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) < 2 {
+		return name, nil
+	}
+	for i := 0; i < len(parts)-1; i++ {
+		parts[i] = strings.ToLower(parts[i])
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func MatchFoldEntry(entries []models.Entry, name string, dirsOnly bool) (models.Entry, bool) {
+	var fold models.Entry
+	found := false
+	for _, e := range entries {
+		if dirsOnly && !e.IsDir {
+			continue
+		}
+		if e.Name == name {
+			return e, true
+		}
+		if strings.EqualFold(e.Name, name) {
+			fold = e
+			found = true
+		}
+	}
+	return fold, found
 }
 
 func JoinKey(prefix, name string) string {

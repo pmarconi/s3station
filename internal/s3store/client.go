@@ -126,8 +126,8 @@ func (c *Client) List(ctx context.Context, prefix string) ([]models.Entry, error
 			}
 			seen[key] = struct{}{}
 			entries = append(entries, models.Entry{
-				Key:  key,
-				Name: storage.BaseName(key),
+				Key:   key,
+				Name:  storage.BaseName(key),
 				IsDir: true,
 				Kind:  models.KindFolder,
 			})
@@ -235,6 +235,60 @@ func (c *Client) Head(ctx context.Context, key string) (models.Entry, error) {
 		LastModified: aws.ToTime(out.LastModified),
 		Kind:         storage.ResolveKind(name, aws.ToString(out.ContentType), storage.IsFolderKey(key)),
 	}, nil
+}
+
+// Stat is Head plus a list fallback. Some S3-compatible stores omit
+// Content-Length on Head while ListObjects still has Size.
+func (c *Client) Stat(ctx context.Context, key string) (models.Entry, error) {
+	ent, err := c.Head(ctx, key)
+	if err != nil {
+		listed, lerr := c.statFromList(ctx, key)
+		if lerr != nil {
+			return models.Entry{}, err
+		}
+		return listed, nil
+	}
+	if ent.Size > 0 || ent.IsDir {
+		return ent, nil
+	}
+	if listed, lerr := c.statFromList(ctx, key); lerr == nil && listed.Size > 0 {
+		ent.Size = listed.Size
+		if listed.ETag != "" {
+			ent.ETag = listed.ETag
+		}
+		if !listed.LastModified.IsZero() {
+			ent.LastModified = listed.LastModified
+		}
+	}
+	return ent, nil
+}
+
+func (c *Client) statFromList(ctx context.Context, key string) (models.Entry, error) {
+	out, err := c.api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(c.bucket),
+		Prefix:  aws.String(key),
+		MaxKeys: aws.Int32(4),
+	})
+	if err != nil {
+		return models.Entry{}, err
+	}
+	for _, obj := range out.Contents {
+		if aws.ToString(obj.Key) != key {
+			continue
+		}
+		name := storage.BaseName(key)
+		return models.Entry{
+			Key:          key,
+			Name:         name,
+			IsDir:        storage.IsFolderKey(key),
+			Size:         aws.ToInt64(obj.Size),
+			ETag:         strings.Trim(aws.ToString(obj.ETag), `"`),
+			ContentType:  storage.ContentTypeFromName(name, ""),
+			LastModified: aws.ToTime(obj.LastModified),
+			Kind:         storage.KindFromName(name, storage.IsFolderKey(key)),
+		}, nil
+	}
+	return models.Entry{}, fmt.Errorf("object not listed: %s", key)
 }
 
 func (c *Client) Get(ctx context.Context, key string) ([]byte, string, error) {
