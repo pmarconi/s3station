@@ -21,6 +21,36 @@ Station treats S3 as the source of truth.
 
 It is not a background sync client (no watch loop, no two-way replica). It is a 1:1 window onto one prefix in one bucket.
 
+## Stack
+
+| Layer | What |
+| --- | --- |
+| Server | Go, [Chi](https://github.com/go-chi/chi) |
+| HTML | [templ](https://templ.guide) (server-rendered fragments) |
+| UI updates | [Datastar](https://data-star.dev) (`datastar-go` + the local `/static/js/datastar.js`) |
+| Style | Tailwind CSS 4 + DaisyUI 5 (`data-theme="night"`) |
+| Object store | AWS S3 (or S3-compatible) via aws-sdk-go-v2 |
+| Listing cache | Postgres (`pgx`) |
+| Sessions / prefs | Redis |
+| Thumbs | imaging (images), ffmpeg on the host (video stills) |
+| Dev | [Air](https://github.com/air-verse/air), Task, Docker Compose |
+
+There is no React/Vue/SPA build. The first paint is HTML from templ. After that, Datastar patches pieces of the page over SSE.
+
+## Datastar
+
+[Datastar](https://data-star.dev) drives in-page UI: folder navigation, modals, flashes, selection, and trash/settings actions. Signals live on the page root (`data-signals`). Clicks and submits run expressions (`@get`, `@post`) that send the current signals to Go. Handlers reply with SSE: replace `#file-panel` / `#crumbs` / `#meta-bar` (or `#trash-panel`) and patch signals (`prefix`, `_busy`, `_flash`, …).
+
+Examples:
+
+- Open a folder: `$prefix = "photos/"; @get('/files')` → listing patch + `history.pushState` to `/files/photos/`
+- Trash or move: `@post('/files/trash')` / `@post('/files/move')` with `$targetKey` or `$selected`
+- Multi-select: `$selected` is a **string array** of object keys (not a map — Datastar nests object keys on `.`)
+
+**Not Datastar:** S3 uploads, drag-and-drop, the image/video/PDF gallery, and browser back/forward. Those are small vanilla scripts (`upload.js`, `gallery.js`, `nav.js`) that talk to JSON/binary endpoints or dispatch `CustomEvent`s (`station-uploaded`, `station-navigate`) which Datastar then handles.
+
+Do not use `@get` / `@post` for zips, thumb bytes, or the presigned-upload handshake — those are `fetch`, `XMLHttpRequest`, or a normal `<a href>`.
+
 ## Presigned URLs
 
 The browser talks to S3 with **presigned URLs**. Station holds the AWS keys; the browser never sees them.
