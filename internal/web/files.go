@@ -8,12 +8,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/starfederation/datastar-go/datastar"
 
 	"station/internal/filesvc"
 	"station/internal/locks"
+	"station/internal/models"
 	"station/internal/session"
 	"station/internal/storage"
 	"station/internal/views"
@@ -338,6 +340,42 @@ func (s *Server) purgeCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.flash(datastar.NewSSE(w, r), "ok", "All folder listings were dropped from Postgres.")
+}
+
+func (s *Server) generateThumb(w http.ResponseWriter, r *http.Request) {
+	sig, err := s.readSignals(r)
+	if err != nil {
+		http.Error(w, "bad signals", http.StatusBadRequest)
+		return
+	}
+	if err := s.files.GenerateThumb(r.Context(), sig.TargetKey); err != nil {
+		s.log.Error("generate thumb", "err", err)
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	listing, err := s.files.List(r.Context(), sig.Prefix, false)
+	if err != nil {
+		s.flash(datastar.NewSSE(w, r), "bad", publicError(err))
+		return
+	}
+	bustThumbURLs(&listing, sig.TargetKey)
+	s.patchListing(w, r, listing, "Thumbnail generated.", sig.Prefix, false)
+}
+
+func bustThumbURLs(listing *models.Listing, key string) {
+	stamp := strconv.FormatInt(time.Now().Unix(), 10)
+	for i := range listing.Entries {
+		if listing.Entries[i].Key != key {
+			continue
+		}
+		if listing.Entries[i].ThumbURL != "" {
+			listing.Entries[i].ThumbURL += "?t=" + stamp
+		}
+		for j := range listing.Entries[i].ThumbURLs {
+			listing.Entries[i].ThumbURLs[j] += "?t=" + stamp
+		}
+		return
+	}
 }
 
 func (s *Server) purgeThumbs(w http.ResponseWriter, r *http.Request) {

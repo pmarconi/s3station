@@ -263,7 +263,16 @@ func ThumbKeyFromPublic(rest string) (string, error) {
 	if rest == "" || strings.Contains(rest, "..") || strings.ContainsRune(rest, 0) {
 		return "", ErrInvalidPath
 	}
-	key := ThumbPrefix + rest
+	parts := strings.Split(rest, "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part, err := url.PathUnescape(part)
+		if err != nil || part == "" || part == "." || part == ".." || strings.Contains(part, "..") {
+			return "", ErrInvalidPath
+		}
+		clean = append(clean, part)
+	}
+	key := ThumbPrefix + strings.Join(clean, "/")
 	if !IsThumbKey(key) || (!strings.HasSuffix(key, ".webp") && !strings.HasSuffix(key, ".jpg")) {
 		return "", ErrInvalidPath
 	}

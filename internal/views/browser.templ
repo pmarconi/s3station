@@ -11,13 +11,14 @@ templ Browser(user string, listing models.Listing, view string) {
 			class="drawer lg:drawer-open"
 			data-attr:data-current-prefix="$prefix"
 			data-attr:data-locked="$_locked"
+			data-attr:data-busy="$_busy"
 			data-signals={ InitialSignals(listing, view) }
 			data-on:station-upload-start__window="$_busy = true; $_flash = evt.detail.message; $_flashKind = 'ok'"
 			data-on:station-uploaded__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-upload-error__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'bad'"
 			data-on:station-moved__window="$_busy = false; $_flash = evt.detail.message; $_flashKind = 'ok'; @get('/files')"
 			data-on:station-navigate__window="$_busy = true; $query = ''; $prefix = evt.detail.prefix; $refresh = false; $nav = false; @get('/files')"
-			data-on:keydown__window="evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showMove = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
+			data-on:keydown__window="!$_busy && evt.key === 'Escape' && ($_showNewFolder = $_showRename = $_showDelete = $_showMove = $_showPreview = $_showUnlock = $_showProtect = $_showUnprotect = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
 			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
@@ -26,15 +27,7 @@ templ Browser(user string, listing models.Listing, view string) {
 				}
 				<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-4 sm:px-6">
 					@Toolbar(listing)
-					<div class="relative">
-						@FilePanel(listing, view)
-						<div id="listing-loading" class="absolute inset-0 z-20 grid min-h-48 place-items-center rounded-box bg-base-200/70 backdrop-blur-[1px]" data-show="$_busy" style="display: none">
-							<div class="flex flex-col items-center gap-2">
-								<span class="loading loading-spinner loading-lg text-primary"></span>
-								<span class="text-sm text-base-content/70">Loading folder…</span>
-							</div>
-						</div>
-					</div>
+					@FilePanel(listing, view)
 				</main>
 			</div>
 			<div class="drawer-side">
@@ -43,6 +36,7 @@ templ Browser(user string, listing models.Listing, view string) {
 			</div>
 			@BrowserModals()
 			@DropOverlay()
+			@BusyOverlay()
 		</div>
 	}
 }
@@ -308,6 +302,9 @@ templ FileCardActions(e models.Entry) {
 					}
 					if e.SaveURL != "" {
 						<li><a href={ templ.SafeURL(e.SaveURL) } download={ e.Name } rel="noreferrer">Download</a></li>
+					}
+					if CanThumb(e) {
+						<li><button type="button" data-on:click={ GenerateThumbExpr(e) } data-indicator:_busy>Generate thumbnail</button></li>
 					}
 					<li><button type="button" data-on:click={ MoveExpr(e) }>Move to</button></li>
 					<li><button type="button" data-on:click={ RenameExpr(e) }>Rename</button></li>

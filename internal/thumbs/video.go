@@ -3,6 +3,7 @@ package thumbs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/png"
@@ -17,9 +18,11 @@ import (
 	"station/internal/storage"
 )
 
+var ErrNoFFmpeg = errors.New("ffmpeg is not installed")
+
 func ensureVideo(ctx context.Context, s3c *s3store.Client, key string) ([]string, error) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return nil, fmt.Errorf("ffmpeg is not installed")
+		return nil, ErrNoFFmpeg
 	}
 
 	urls := make([]string, 0, storage.VideoThumbCount)
@@ -51,9 +54,9 @@ func ensureVideo(ctx context.Context, s3c *s3store.Client, key string) ([]string
 }
 
 func generateVideo(ctx context.Context, s3c *s3store.Client, key string) error {
-	srcURL, err := s3c.PresignGet(ctx, key)
+	raw, _, err := s3c.Get(ctx, key)
 	if err != nil {
-		return err
+		return fmt.Errorf("download source: %w", err)
 	}
 	dir, err := os.MkdirTemp("", "station-vthumbs-*")
 	if err != nil {
@@ -61,11 +64,20 @@ func generateVideo(ctx context.Context, s3c *s3store.Client, key string) error {
 	}
 	defer os.RemoveAll(dir)
 
-	duration := probeDuration(ctx, srcURL)
+	ext := filepath.Ext(key)
+	if ext == "" {
+		ext = ".mp4"
+	}
+	srcPath := filepath.Join(dir, "source"+ext)
+	if err := os.WriteFile(srcPath, raw, 0o600); err != nil {
+		return err
+	}
+
+	duration := probeDuration(ctx, srcPath)
 	stamps := frameTimes(duration, storage.VideoThumbCount)
 	for i, stamp := range stamps {
 		dest := filepath.Join(dir, fmt.Sprintf("%02d.png", i))
-		if err := extractFrame(ctx, srcURL, stamp, dest); err != nil {
+		if err := extractFrame(ctx, srcPath, stamp, dest); err != nil {
 			return fmt.Errorf("frame %d: %w", i, err)
 		}
 		raw, err := os.ReadFile(dest)

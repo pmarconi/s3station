@@ -18,6 +18,7 @@ import (
 	"station/internal/models"
 	"station/internal/session"
 	"station/internal/storage"
+	"station/internal/thumbs"
 	"station/internal/views"
 )
 
@@ -79,6 +80,7 @@ func New(cfg config.Config, sessions *session.Store, files *filesvc.Service, log
 		r.Post("/files/move", s.move)
 		r.Post("/files/rename", s.rename)
 		r.Post("/cache/purge", s.purgeCache)
+		r.Post("/thumbs/generate", s.generateThumb)
 		r.Post("/thumbs/purge", s.purgeThumbs)
 		r.Post("/trash/restore", s.restore)
 		r.Post("/trash/purge", s.purgeTrash)
@@ -265,6 +267,10 @@ func publicError(err error) string {
 		return "That name is already used here."
 	case errors.Is(err, filesvc.ErrInvalidMove):
 		return "Can't move a folder into itself."
+	case errors.Is(err, filesvc.ErrNoThumb):
+		return "Thumbnails are only for images and videos."
+	case errors.Is(err, thumbs.ErrNoFFmpeg):
+		return "Video thumbnails need ffmpeg on the server."
 	case errors.Is(err, locks.ErrLocked):
 		return "Unlock this folder first."
 	case errors.Is(err, locks.ErrWrongPassword):

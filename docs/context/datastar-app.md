@@ -21,6 +21,7 @@ Datastar SSE patches (same page, morph/replace fragments):
 | `@post('/cache/purge')` | `purgeCache` | flash only |
 | `@post('/trash/restore'\|'purge'\|'empty')` | trash handlers | `#trash-panel` + signals |
 | `@post('/thumbs/purge')` | `purgeThumbs` | flash |
+| `@post('/thumbs/generate')` | `generateThumb` | listing |
 | `@post('/prefs')` | `savePrefs` | `view` signal (Redis user pref) |
 
 Depot objects are stored under `files/` in the bucket (`FILES_PREFIX`). The browser URL is `/files/` plus that relative path (`/files/photos/italy/`). Other app pages stay at the root (`/trash`, `/settings`, …). A non-Datastar `GET /files` redirects to `/files/`.

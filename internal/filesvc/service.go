@@ -22,6 +22,7 @@ import (
 var (
 	ErrExists      = errors.New("that name is already used")
 	ErrInvalidMove = errors.New("cannot move a folder into itself")
+	ErrNoThumb     = errors.New("thumbnails are only for images and videos")
 )
 
 type Service struct {
@@ -814,6 +815,35 @@ func unlockedSet(prefixes []string) map[string]bool {
 		out[p] = true
 	}
 	return out
+}
+
+func (s *Service) GenerateThumb(ctx context.Context, key string) error {
+	key, err := storage.NormalizeObjectKey(key)
+	if err != nil {
+		return err
+	}
+	if err := storage.GuardUserKey(key); err != nil {
+		return err
+	}
+	if storage.IsFolderKey(key) {
+		return ErrNoThumb
+	}
+	if err := s.denyIfLocked(ctx, key); err != nil {
+		return err
+	}
+	entry := models.Entry{Key: key, Name: storage.BaseName(key)}
+	if err := s.enrichKind(ctx, &entry); err != nil {
+		return err
+	}
+	if entry.Kind != models.KindImage && entry.Kind != models.KindVideo {
+		return ErrNoThumb
+	}
+	abs := s.abs(key)
+	s.thumbCache.Delete(storage.AllThumbKeys(abs)...)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	_, err = thumbs.Refresh(ctx, s.s3, abs, entry.Kind)
+	return err
 }
 
 func (s *Service) ServeThumb(ctx context.Context, thumbKey string) ([]byte, string, string, error) {

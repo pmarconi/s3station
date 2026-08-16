@@ -8,6 +8,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"sync"
 	"time"
 
 	"github.com/disintegration/imaging"
@@ -55,7 +56,19 @@ func thumbKeys(key string, kind models.Kind) []string {
 	}
 }
 
+func Refresh(ctx context.Context, s3c *s3store.Client, key string, kind models.Kind) ([]string, error) {
+	Remove(ctx, s3c, []string{key})
+	return Ensure(ctx, s3c, key, kind)
+}
+
+var genLocks sync.Map
+
 func Ensure(ctx context.Context, s3c *s3store.Client, key string, kind models.Kind) ([]string, error) {
+	v, _ := genLocks.LoadOrStore(key+"\x00"+string(kind), &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
 	switch kind {
 	case models.KindImage:
 		url, err := ensureImage(ctx, s3c, key)

@@ -133,6 +133,14 @@ func RenameExpr(e models.Entry) string {
 	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $renameTo = %s; $_showRename = true", jsString(e.Key), jsString(e.Name), jsString(e.Name))
 }
 
+func CanThumb(e models.Entry) bool {
+	return !e.IsDir && (e.Kind == models.KindImage || e.Kind == models.KindVideo)
+}
+
+func GenerateThumbExpr(e models.Entry) string {
+	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $_busy = true; @post('/thumbs/generate')", jsString(e.Key), jsString(e.Name))
+}
+
 func TrashExpr(e models.Entry) string {
 	return fmt.Sprintf("evt.stopPropagation(); $targetKey = %s; $targetName = %s; $_showDelete = true", jsString(e.Key), jsString(e.Name))
 }

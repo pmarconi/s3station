@@ -6,8 +6,9 @@ templ Trash(user string, items []models.TrashItem) {
 	@Layout("Trash · Station") {
 		<div
 			class="drawer lg:drawer-open"
+			data-attr:data-busy="$_busy"
 			data-signals={ InitialSignals(models.Listing{}, "") }
-			data-on:keydown__window="evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
+			data-on:keydown__window="!$_busy && evt.key === 'Escape' && ($_showDelete = $_showEmptyTrash = false)"
 		>
 			<input id="station-drawer" type="checkbox" class="drawer-toggle"/>
 			<div class="drawer-content flex min-h-screen flex-col bg-base-200">
@@ -24,6 +25,7 @@ templ Trash(user string, items []models.TrashItem) {
 			</div>
 			@TrashModals()
 			@GalleryModal()
+			@BusyOverlay()
 		</div>
 	}
 }

@@ -1,6 +1,9 @@
 package storage
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizePrefix(t *testing.T) {
 	cases := []struct {
@@ -80,6 +83,27 @@ func TestPublicFolderPath(t *testing.T) {
 	}
 	if _, ok := PrefixFromRequestPath("/thumbs/x.webp"); ok {
 		t.Fatal("thumbs is an app route")
+	}
+}
+
+func TestVideoThumbPublicPath(t *testing.T) {
+	src := "files/Reject Modernity, Embrace REAL Masculinity.mp4"
+	thumb := VideoThumbKey(src, 1)
+	if !IsVideoThumb(thumb) {
+		t.Fatal(thumb)
+	}
+	got, err := ThumbKeyFromPublic(strings.TrimPrefix(PublicThumbPath(thumb), "/thumbs/"))
+	if err != nil || got != thumb {
+		t.Fatalf("roundtrip %q %v", got, err)
+	}
+	encoded := "files/Reject%20Modernity%2C%20Embrace%20REAL%20Masculinity.mp4.v01.webp"
+	got, err = ThumbKeyFromPublic(encoded)
+	if err != nil || got != thumb {
+		t.Fatalf("encoded %q %v", got, err)
+	}
+	source, ok := SourceKeyFromThumb(got)
+	if !ok || source != src {
+		t.Fatalf("source %q %v", source, ok)
 	}
 }
 

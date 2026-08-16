@@ -22,8 +22,9 @@ templ SettingsNav(user string) {
 templ Settings(user string) {
 	@Layout("Settings · Station") {
 		<div
+			data-attr:data-busy="$_busy"
 			data-signals={ InitialSignals(models.Listing{}, "") }
-			data-on:keydown__window="evt.key === 'Escape' && ($_showPurgeThumbs = false)"
+			data-on:keydown__window="!$_busy && evt.key === 'Escape' && ($_showPurgeThumbs = false)"
 		>
 		<div class="min-h-screen bg-base-200">
 			@SettingsNav(user)
@@ -67,6 +68,7 @@ templ Settings(user string) {
 				</div>
 			</main>
 			@SettingsModals()
+			@BusyOverlay()
 		</div>
 		</div>
 	}
